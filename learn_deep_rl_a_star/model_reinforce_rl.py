@@ -204,12 +204,12 @@ if __name__ == '__main__':
         if score > 1.1:
             i_generation += 1
             path_old_agent = path_new_agent
-            print(f'to born new star with score {score:.03f}')
-            print('statistic', 'old:', win_old, time_old, 'new', win_new, time_new)
+            print(f'\tto born new star with score {score:.03f}')
+            print('\tstatistic', 'old:', win_old, time_old, 'new', win_new, time_new)
             print(f'generation {i_generation}')
         else:
-            print(f'score {score:.03f}')
-            print('statistic', 'old:', win_old, time_old, 'new', win_new, time_new)
+            # print(f'score {score:.03f}')
+            print('\tstatistic', 'old:', win_old, time_old, 'new', win_new, time_new)
 
 
 
