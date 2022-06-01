@@ -12,10 +12,10 @@ class PPO:
 
         self.timesteps_per_batch = 4000
         self.max_timesteps_per_episode = 256
-        self.n_updates_per_iteration = 10
-        self.gamma = 0.97
+        self.n_updates_per_iteration = 50
+        self.gamma = 0.99
         self.clip = 0.2
-        self.lr = 0.0001
+        self.lr = 0.0003
 
         self.actor = PPOActor(64).to(device)
         self.critic = PPOCritic(64).to(device)
@@ -66,7 +66,7 @@ class PPO:
                 critic_loss.backward()
                 self.critic_optim.step()
             out = self.play_val_games()
-            print(out)
+            print(t_so_far, sum([x[0] for x in out]))
 
 
     def get_action(self, obs):
@@ -151,7 +151,7 @@ class PPO:
     def play_val_games(self):
         with torch.no_grad():
             out = []
-            for i in range(10):
+            for i in range(100):
                 steps = 0
                 win = 0
                 obs = self.env.reset()
