@@ -1,3 +1,5 @@
+import copy
+from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 import torch
 import random
@@ -24,7 +26,7 @@ class PolicyNetwork():
         self.hidden_state = torch.zeros((1, 1, 64)).to(device)
         self.a_old = torch.zeros((1, 5)).to(device)
 
-        self.optimizer = torch.optim.Adam(self.solver.parameters(), lr)
+        self.optimizer = torch.optim.SGD(self.solver.parameters(), lr)
 
 
     def predict(self, s):
@@ -34,15 +36,28 @@ class PolicyNetwork():
         return torch.squeeze(out)
 
 
-    def update(self, returns, log_probs):
-        policy_gradient = []
-        for log_prob, Gt in zip(log_probs, returns):
-            policy_gradient.append(-log_prob * Gt)
+    def update(self, dataloader_train):
+        self.solver.train()
+        self.hidden_state = torch.zeros((batch_size, 1, 64)).to(device)
 
-        loss = torch.stack(policy_gradient).sum()
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+        sum = 0
+        for i, (ts, ta, tao, tt) in enumerate(dataloader_train):
+            s, a, a_old, target = ts.to(device).to(torch.float32), \
+                          ta.to(device), \
+                          tao.to(device), tt.to(device)
+
+            if len(s) != batch_size:
+                continue
+
+            pred, self.hidden_state = self.solver(s, a_old, self.hidden_state)
+            prob = nn.Softmax(1)(pred)
+            prob_a = prob.gather(1, torch.unsqueeze(a,1)).squeeze(1)
+            loss = (-(prob_a+1e-5).log() * target).mean()
+
+            # Backpropagation
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
 
 
     def get_action(self, s):
@@ -61,14 +76,16 @@ class PolicyNetwork():
 
 def reinforce(n_episode, gamma=1.0, path_new_agent=None, path_old_agent=None, ):
     our_agent = PolicyNetwork(path_new_agent)
+    states_dataset = []
+    actions_dataset = []
+    actions_old_dataset = []
+    rewards_dataset = []
     for episode in range(n_episode):
         our_agent.hidden_state = torch.zeros((1, 1, 64)).to(device)
-        # if episode % 100 == 0:
-        #     print('episode {}'.format(episode))
 
         num_agents = random.randint(min_agent, max_agent)
         grid_config = GridConfig(num_agents=num_agents,  # количество агентов на карте
-                                 size=random.randint(30, 64),  # размеры карты
+                                 size=random.randint(min_agent, max_agent),  # размеры карты
                                  density=0.3,  # плотность препятствий
                                  seed=None,  # сид генерации задания
                                  max_episode_steps=256,  # максимальная длина эпизода
@@ -76,45 +93,78 @@ def reinforce(n_episode, gamma=1.0, path_new_agent=None, path_old_agent=None, ):
                                  )
         env = gym.make("Pogema-v0", grid_config=grid_config)
 
-        log_probs = []
-        rewards = []
+        states = []
+        actions = []
+        actions_old = []
+
+        rewards_game = []
         state = env.reset()
 
         n_rl_agent = random.randint(0, num_agents-1)
-
+        a_old = 0
 
         while True:
+            states.append(state[n_rl_agent].astype(np.uint8))
+
             all_action = []
             for robot in range(num_agents):
                 if robot == n_rl_agent:
                     action_rl, log_prob = our_agent.get_action(state[robot])
+
                     all_action.append(action_rl)
-                    log_probs.append(log_prob)
+
+                    actions.append(action_rl)
+                    actions_old.append(a_old)
+
+                    a_old = action_rl
+
                 else:
                     all_action.append(random.randint(0, 4))
 
 
             next_state, reward, done, _ = env.step(all_action)
 
-            rewards.append(reward[n_rl_agent])
+            rewards_game.append(reward[n_rl_agent])
 
             if done[n_rl_agent] or all(done):
-                returns = []
-                Gt = 0
-                pw = 0
-                for reward in rewards[::-1]:
-                    Gt += gamma ** pw * reward
-                    pw += 1
-                    returns.append(Gt)
-
-                returns = returns[::-1]
-                our_agent.update(returns, log_probs)
-                # print(sum(rewards))
                 break
 
             state = next_state
+        target = sum(rewards_game)
+        rewards = [(1 if target == 1 else -1) for _ in rewards_game]
 
-        torch.save(our_agent.solver.state_dict(), path_new_agent)
+        states_dataset.append(copy.deepcopy(states))
+        actions_dataset.append(copy.deepcopy(actions))
+        actions_old_dataset.append(copy.deepcopy(actions_old))
+        rewards_dataset.append(copy.deepcopy(rewards))
+
+    dataset = Dataset_games(states_dataset, actions_dataset, actions_old_dataset, rewards_dataset)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    our_agent.update(dataloader)
+    torch.save(our_agent.solver.state_dict(), path_new_agent)
+
+
+class Dataset_games(Dataset):
+    def __init__(self, states, actions, actions_old, rewards):
+        self.states = [item for sublist in states for item in sublist]
+        self.actions = [item for sublist in actions for item in sublist]
+        self.actions_old = [item for sublist in actions_old for item in sublist]
+        self.rewards = [item for sublist in rewards for item in sublist]
+
+    def __len__(self):
+        return len(self.states)
+
+    def __getitem__(self, idx):
+        s = torch.from_numpy(self.states[idx])
+
+        a = torch.tensor(self.actions[idx])
+
+        a_old = torch.nn.functional.one_hot(torch.tensor(self.actions_old[idx]), 5)
+
+        t = torch.tensor(self.rewards[idx])
+
+        return s, a, a_old, t
+
 
 def play_game(config, path_new_agent, path_old_agent, n_rl_agent):
     env = gym.make("Pogema-v0", grid_config=config)
@@ -123,12 +173,6 @@ def play_game(config, path_new_agent, path_old_agent, n_rl_agent):
     our_agent = PolicyNetwork(path_new_agent)
 
     num_agents = len(obs)
-    # robots = []
-    # for robot in range(num_agents):
-    #     if robot == n_rl_agent:
-    #         robots.append(PolicyNetwork(path_new_agent))
-    #     else:
-    #         robots.append(PolicyNetwork(path_old_agent))
 
     done = [False for _ in range(len(obs))]
     steps = 0
@@ -186,11 +230,12 @@ def compare_two_agent(path_new_agent, path_old_agent):
 if __name__ == '__main__':
 
     n_action = 5
-    min_agent = 20
-    max_agent = 64
+    min_agent = 10
+    max_agent = 30
     lr = 0.0002
-    n_episode = 1000
+    n_episode = 500
     n_episode_val = 100
+    batch_size = 64
     gamma = 0.99
     n_generation = 100
     i_generation = 1
