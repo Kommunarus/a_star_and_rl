@@ -109,7 +109,7 @@ class PPO:
         self.n_updates_per_iteration = 50
         self.gamma = 0.99
         self.clip = 0.2
-        self.lr = 0.0003
+        self.lr = 0.001
         self.obs_dim = env.observation_space.shape[0]
         self.act_dim = env.action_space.shape[0]
 
@@ -286,9 +286,10 @@ if __name__ == '__main__':
 
     env = gym.make('LunarLanderContinuous-v2')
     model = PPO(env)
-    model.learn(5_000_000)
-
-    torch.save(model.actor.state_dict(), 'ppo_actor.pth')
+    # model.learn(5_000_000)
+    #
+    # torch.save(model.actor.state_dict(), 'ppo_actor.pth')
+    model.actor.load_state_dict(torch.load('ppo_actor.pth'))
 
     for i in range(10):
         obs = env.reset()

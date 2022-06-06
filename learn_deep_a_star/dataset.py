@@ -79,7 +79,7 @@ class Model:
         self.actions = {tuple(GridConfig().MOVES[i]): i for i in
                         range(len(GridConfig().MOVES))}  # make a dictionary to translate coordinates of actions into id
 
-    def act(self, obs, dones, positions_xy, targets_xy) -> list:
+    def act(self, obs, positions_xy, targets_xy) -> list:
         if self.agents is None:
             self.agents = [AStar() for _ in range(len(obs))]  # create a planner for each of the agents
         actions = []
