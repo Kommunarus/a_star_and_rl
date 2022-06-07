@@ -166,7 +166,7 @@ class Dataset_games(Dataset):
         self.actions = [item for play in actions for agent in play for item in agent]
         self.actions_star = [item for play in action_star for agent in play for item in agent]
         self.actions_old = [item for play in actions_old for agent in play for item in agent]
-        self.rewards = [item for play in rewards  for agent in play for item in agent]
+        self.rewards = [item for play in rewards for agent in play for item in agent]
 
     def __len__(self):
         return len(self.states)
@@ -210,13 +210,14 @@ def play_game(config, path_new_agent):
 
     target = [sum(x) for x in rewards_game]
     win = sum(target)
-    return win
+    csr = 1 if win == num_agents else 0
+    return win, csr
 
 def compare_two_agent(path_new_agent, path_old_agent):
     # policy_old = PolicyNetwork(old_agent)
     # policy_new = PolicyNetwork()
-    win_new, time_new = 0, 0
-    win_old, time_old = 0, 0
+    win_new, time_new, csr_new = 0, 0, 0
+    win_old, time_old, csr_old = 0, 0, 0
     for ep in range(n_episode_val):
         seed = random.randint(0, 922337203685)
         random.seed(seed)
@@ -229,28 +230,29 @@ def compare_two_agent(path_new_agent, path_old_agent):
                                  )
         res_new = play_game(grid_config, path_new_agent)
 
-        win_new += res_new
+        win_new += res_new[0]
+        csr_new += res_new[1]
         time_new += 64
 
         res_old = play_game(grid_config, path_old_agent)
 
-        win_old += res_old
+        win_old += res_old[0]
+        csr_old += res_old[1]
         time_old += 64
     # k = win_new / time_new
-    return win_new, time_new, win_old, time_old
+    return win_new, time_new, win_old, time_old, csr_new/n_episode_val, csr_old/n_episode_val
 
 if __name__ == '__main__':
 
     n_action = 5
     min_agent = 30
     max_agent = 64
-    lr = 0.0001
-    n_episode = 3
-    n_episode_val = 10
-    batch_size = 2048
-    gamma = 0.99
-    n_generation = 100
+    lr = 0.0002
+    n_episode = 10
+    n_episode_val = 50
+    batch_size = 4096
     path_old_agent = 'model_III_v1.pth'
+    n, m = 1, 1
     while True:
 
         path_new_agent = 'model_III_v2.pth'
@@ -258,17 +260,21 @@ if __name__ == '__main__':
             shutil.copyfile(path_old_agent, path_new_agent)
 
         reinforce(n_episode, path_new_agent)
-
-        win_new, time_new, win_old, time_old = compare_two_agent(path_new_agent, path_old_agent)
-        print('\t сейчас дошло {} из {} ({:.01f}%). Было бы {} из {} ({:.01f}%). Delta'
-              '{} / {}%'.format(
-            int(win_new),
-            time_new,
-            100*win_new/time_new,
-            int(win_old),
-            time_old,
-            100*win_old/time_old, int(win_new) - int(win_old), (int(win_new) - int(win_old))/time_old
-        ))
+        if n % 10 == 0:
+            win_new, time_new, win_old, time_old, csr_new, csr_old = compare_two_agent(path_new_agent, path_old_agent)
+            print('{}. сейчас дошло {} из {} (ISR={:.01f}%, CSR={:.01f}). '
+                  'Было бы {} из {} (ISR={:.01f}%,  CSR={:.01f}). Delta'
+                  '{} / {}%'.format(m,
+                int(win_new),
+                time_new,
+                100*win_new/time_new, 100*csr_new,
+                int(win_old),
+                time_old,
+                100*win_old/time_old, 100*csr_old,
+                int(win_new) - int(win_old), (int(win_new) - int(win_old))/time_old
+            ))
+            m += 1
+        n += 1
 
 
 
