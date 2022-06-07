@@ -51,11 +51,15 @@ class PolicyNetwork():
 
             pred, self.hidden_state = self.solver(s, a_old, self.hidden_state)
             prob = nn.Softmax(1)(pred)
-            prob_a = prob.gather(1, torch.unsqueeze(a,1)).squeeze(1)
+            prob_a = prob.gather(1, torch.unsqueeze(a, 1)).squeeze(1)
             loss1 = (-(prob_a+1e-5).log() * target).mean()
 
-            loss2 = torch.nn.CrossEntropyLoss()(pred, a_star.to(torch.float))
+            prob_astar = prob.gather(1, torch.unsqueeze(a_star, 1)).squeeze(1)
+            loss2 = (-(prob_astar+1e-5).log()).mean()
+            # loss2 = (-(prob_a+1e-5).log() * a_star).mean()
+            # loss2 = torch.nn.CrossEntropyLoss()(pred, a_star.to(torch.float))
 
+            # loss =  loss2
             loss = loss1 + loss2
             # Backpropagation
             self.optimizer.zero_grad()
@@ -175,7 +179,8 @@ class Dataset_games(Dataset):
         a_old = torch.nn.functional.one_hot(torch.tensor(self.actions_old[idx]), 5)
 
         t = torch.tensor(self.rewards[idx])
-        a_star= torch.nn.functional.one_hot(torch.tensor(self.actions_star[idx]), 5)
+        # a_star= torch.nn.functional.one_hot(torch.tensor(self.actions_star[idx]), 5)
+        a_star = torch.tensor(self.actions_star[idx])
 
         return s, a, a_old, t, a_star
 
@@ -207,10 +212,11 @@ def play_game(config, path_new_agent):
     win = sum(target)
     return win
 
-def compare_two_agent(path_new_agent):
+def compare_two_agent(path_new_agent, path_old_agent):
     # policy_old = PolicyNetwork(old_agent)
     # policy_new = PolicyNetwork()
     win_new, time_new = 0, 0
+    win_old, time_old = 0, 0
     for ep in range(n_episode_val):
         seed = random.randint(0, 922337203685)
         random.seed(seed)
@@ -226,8 +232,12 @@ def compare_two_agent(path_new_agent):
         win_new += res_new
         time_new += 64
 
-    k = win_new / time_new
-    return k, win_new, time_new
+        res_old = play_game(grid_config, path_old_agent)
+
+        win_old += res_old
+        time_old += 64
+    # k = win_new / time_new
+    return win_new, time_new, win_old, time_old
 
 if __name__ == '__main__':
 
@@ -235,9 +245,9 @@ if __name__ == '__main__':
     min_agent = 30
     max_agent = 64
     lr = 0.0001
-    n_episode = 2
-    n_episode_val = 2
-    batch_size = 64
+    n_episode = 3
+    n_episode_val = 10
+    batch_size = 2048
     gamma = 0.99
     n_generation = 100
     path_old_agent = 'model_III_v1.pth'
@@ -249,8 +259,16 @@ if __name__ == '__main__':
 
         reinforce(n_episode, path_new_agent)
 
-        score, win_new, time_new = compare_two_agent(path_new_agent)
-        print('\t дошло {:d} из {} ({:.03f})'.format(win_new, time_new, score))
+        win_new, time_new, win_old, time_old = compare_two_agent(path_new_agent, path_old_agent)
+        print('\t сейчас дошло {} из {} ({:.01f}%). Было бы {} из {} ({:.01f}%). Delta'
+              '{} / {}%'.format(
+            int(win_new),
+            time_new,
+            100*win_new/time_new,
+            int(win_old),
+            time_old,
+            100*win_old/time_old, int(win_new) - int(win_old), (int(win_new) - int(win_old))/time_old
+        ))
 
 
 
