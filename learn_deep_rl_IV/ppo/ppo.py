@@ -71,6 +71,8 @@ class Agent:
     def __init__(self):
         self.critic_rnn_hidden_dim = torch.zeros((1, 64), dtype=torch.float).to(device)
         self.actor_rnn_hidden_dim = torch.zeros((1, 64), dtype=torch.float).to(device)
+        self.targets_xy = -1000
+        self.agents_xy = []
 
 class PPO:
     def __init__(self, env, num_agents=None, path_to_actor=None, path_to_critic=None):
@@ -132,7 +134,7 @@ class PPO:
                     critic_loss.backward()
                     self.critic_optim.step()
             mm += 1
-            if mm % 10 == 0:
+            if mm % 1 == 0:
                 torch.save(self.actor.state_dict(), 'ppo_actor.pth')
                 torch.save(self.critic.state_dict(), 'ppo_critic.pth')
                 grid_config = GridConfig(num_agents=64,  # количество агентов на карте
@@ -148,11 +150,6 @@ class PPO:
 
 
     def get_action(self, obs, a_old):
-        # mean = self.actor(obs)
-        # dist = MultivariateNormal(mean, self.cov_mat)
-        # action = dist.sample()
-        # log_prob = dist.log_prob(action)
-        # return action.detach().cpu().numpy(), log_prob.detach().cpu().numpy()
         actions = []
         log_probs = []
         for i, agent in enumerate(self.agents):
@@ -185,7 +182,13 @@ class PPO:
         # Rewards this episode
         ep_rews = []
         done = [False] * len(obs)
+        finish = [False] * len(obs)
         ep_t = 0
+
+        targets_xy = self.env.get_targets_xy_relative()
+        agents_xy = self.env.get_agents_xy_relative()
+        self.update_xy(targets_xy, agents_xy)
+
         while not all(done):
             if ep_t == 0:
                 batch_acts_old.append([0] * len(obs))
@@ -196,11 +199,20 @@ class PPO:
                 action, log_prob = self.get_action(obs, batch_acts_old[-1])
             obs, rew, done, _ = self.env.step(action)
 
-            ep_rews.append(rew)
+
+            for y, a_done in enumerate(done):
+                if a_done == True:
+                    finish[y] = True
+
+            ep_rews.append(self.get_reward(rew, finish))
             batch_acts.append(action)
             batch_log_probs.append(log_prob)
             ep_t += 1
             t += 1
+            targets_xy = self.env.get_targets_xy_relative()
+            agents_xy = self.env.get_agents_xy_relative()
+            self.update_xy(targets_xy, agents_xy)
+
 
         batch_lens.append(ep_t)
         batch_rews.append(ep_rews)
@@ -213,6 +225,23 @@ class PPO:
         batch_log_probs = torch.tensor(np.array(batch_log_probs), dtype=torch.float).to(device)
         batch_rtgs = self.compute_rtgs(batch_rews).to(device)
         return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_acts_old
+
+    def get_reward(self, step_reward, finish):
+        dist_agents = self.env.get_agents_xy_relative()
+        rew = []
+        for da, sr, f, agent in zip(dist_agents, step_reward, finish, self.agents):
+            if sr == 1.0:
+                rew.append(100)
+            elif da in agent.agents_xy:
+                rew.append(-5)
+            # elif abs(dt[0]) + abs(dt[1]) > abs(agent.targets_xy[0]) + abs(agent.targets_xy[1]):
+            #     rew.append(-5)
+            elif f == True:
+                rew.append(0)
+            else:
+                rew.append(-1)
+
+        return rew
 
     def compute_rtgs(self, batch_rews):
         batch_rtgs = []
@@ -236,7 +265,6 @@ class PPO:
 
         V = torch.stack(V, 0)
 
-        # A = []
         Lo = []
         for i in range(batch_obs.shape[0]):
             s = batch_obs[i].unsqueeze(0)
@@ -251,51 +279,55 @@ class PPO:
 
         log_prob = torch.stack(Lo, 0)
 
-        # mean = self.actor(batch_obs)
-        # dist = MultivariateNormal(mean, self.cov_mat)
-        # log_probs = dist.log_prob(batch_acts)
-
         return V.squeeze(1), log_prob
 
     def init_hidden(self, episode_num):
         for i in range(self.num_agents):
             self.agents[i].actor_rnn_hidden_dim = torch.zeros((episode_num, 64)).to(device)
             self.agents[i].critic_rnn_hidden_dim = torch.zeros((episode_num, 64)).to(device)
+            self.agents[i].targets_xy = -1000
+            self.agents[i].agents_xy = []
+
+    def update_xy(self, targets_xy, agents_xy):
+        for i in range(self.num_agents):
+            self.agents[i].targets_xy = targets_xy[i]
+            self.agents[i].agents_xy.append(agents_xy[i])
 
 
 def play_game(config, path_new_agent):
     env = gym.make("Pogema-v0", grid_config=config)
     obs = env.reset()
 
-    our_agent = PPOActor(input_shape=3, dop_input_shape=5, rnn_hidden_dim=64, n_actions=5).to(device)
-    our_agent.load_state_dict(torch.load(path_new_agent))
+    num_as = len(obs)
+    our_agent = PPO(env, num_as, path_to_actor=path_new_agent)
+    our_agent.actor.eval()
+    our_agent.init_hidden(1)
 
-    num_agents = len(obs)
-
-    done = [False for _ in range(len(obs))]
-
-    rewards_game = [[] for _ in range(num_agents)]
-
+    # Rewards this episode
+    done = [False] * num_as
+    rewards_game = [[] for _ in range(num_as)]
+    batch_acts_old = []
+    ep_t = 0
     while not all(done):
-        all_action = []
-        for robot in range(num_agents):
-            action_rl = our_agent.get_action(obs[robot])
-            all_action.append(action_rl)
+        if ep_t == 0:
+            batch_acts_old.append([0] * len(obs))
+        else:
+            batch_acts_old.append(action)
+        action, _ = our_agent.get_action(obs, batch_acts_old[-1])
+        obs, rew, done, _ = env.step(action)
 
-        obs, reward, done, info = env.step(all_action)
-
-        for robot in range(num_agents):
-            rewards_game[robot].append(reward[robot])
+        for robot in range(num_as):
+            rewards_game[robot].append(rew[robot])
 
     target = [sum(x) for x in rewards_game]
     win = sum(target)
-    csr = 1 if win == num_agents else 0
+    csr = 1 if win == num_as else 0
     return win, csr
 
 
 if __name__ == '__main__':
 
-    n_agents = 64
+    n_agents = 4
     grid_config = GridConfig(num_agents=n_agents,
                              size=64,
                              density=0.3,
