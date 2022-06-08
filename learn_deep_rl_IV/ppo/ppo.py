@@ -6,6 +6,7 @@ import torch.nn.functional as F
 # from torch.distributions import MultivariateNormal
 import gym
 from pogema import GridConfig
+import random
 
 device = torch.device('cuda:1')
 
@@ -39,7 +40,7 @@ class PPOActor(nn.Module):
         return q, torch.unsqueeze(h.detach(), 1)
 
 class PPOCritic(nn.Module):
-    def __init__(self, input_shape, dop_input_shape, rnn_hidden_dim):
+    def __init__(self, input_shape, rnn_hidden_dim):
         super(PPOCritic, self).__init__()
         self.rnn_hidden_dim = rnn_hidden_dim
         self.feachextractor = nn.Sequential(
@@ -54,14 +55,14 @@ class PPOCritic(nn.Module):
             nn.Flatten(1)
         )
 
-        self.fc1 = nn.Linear(11*11*16 + dop_input_shape, self.rnn_hidden_dim)
+        self.fc1 = nn.Linear(11*11*16, self.rnn_hidden_dim)
         self.rnn = nn.GRUCell(self.rnn_hidden_dim, self.rnn_hidden_dim)
         self.fc2 = nn.Linear(self.rnn_hidden_dim, 1)
 
-    def forward(self, s, dopobs, hidden_state):
+    def forward(self, s, hidden_state):
         aa_flat = self.feachextractor(s)
-        input = torch.hstack([aa_flat, dopobs])
-        x = F.relu(self.fc1(input))
+        # input = torch.hstack([aa_flat, dopobs])
+        x = F.relu(self.fc1(aa_flat))
         h_in = hidden_state.reshape(-1, self.rnn_hidden_dim)
         h = self.rnn(x, h_in)
         q = self.fc2(h)
@@ -71,7 +72,7 @@ class Agent:
     def __init__(self):
         self.critic_rnn_hidden_dim = torch.zeros((1, 64), dtype=torch.float).to(device)
         self.actor_rnn_hidden_dim = torch.zeros((1, 64), dtype=torch.float).to(device)
-        self.targets_xy = -1000
+        self.targets_xy = (0, 0)
         self.agents_xy = []
 
 class PPO:
@@ -82,11 +83,9 @@ class PPO:
         self.gamma = 0.99
         self.clip = 0.2
         self.lr = 0.0001
-        self.obs_dim = (3, 11, 11)
-        self.act_dim = 5
         self.num_agents = num_agents
 
-        self.critic = PPOCritic(3, 5, 64).to(device)
+        self.critic = PPOCritic(3, 64).to(device)
         if path_to_critic is not None:
             self.critic.load_state_dict(torch.load(path_to_critic))
 
@@ -98,8 +97,8 @@ class PPO:
         for i in range(self.num_agents):
             self.agents.append(Agent())
 
-        self.actor_optim = Adam(self.actor.parameters(), lr=self.lr)
-        self.critic_optim = Adam(self.critic.parameters(), lr=self.lr)
+        self.actor_optim = SGD(self.actor.parameters(), lr=self.lr)
+        self.critic_optim = SGD(self.critic.parameters(), lr=self.lr)
 
 
     def learn(self, max_time_steps):
@@ -230,16 +229,20 @@ class PPO:
         dist_agents = self.env.get_agents_xy_relative()
         rew = []
         for da, sr, f, agent in zip(dist_agents, step_reward, finish, self.agents):
+            h_new = abs(da[0] - agent.targets_xy[0]) + abs(da[1] - agent.targets_xy[1])  # Manhattan distance as a heuristic function
+            h_old = abs(agent.agents_xy[-1][0] - agent.targets_xy[0]) + \
+                    abs(agent.agents_xy[-1][1] - agent.targets_xy[1])  # Manhattan distance as a heuristic function
+
             if sr == 1.0:
-                rew.append(100)
+                rew.append(1)
             elif da in agent.agents_xy:
-                rew.append(-5)
-            # elif abs(dt[0]) + abs(dt[1]) > abs(agent.targets_xy[0]) + abs(agent.targets_xy[1]):
-            #     rew.append(-5)
+                rew.append(-0.02)
+            elif h_new < h_old:
+                rew.append(0.02)
             elif f == True:
                 rew.append(0)
             else:
-                rew.append(-1)
+                rew.append(-0.01)
 
         return rew
 
@@ -257,10 +260,10 @@ class PPO:
         V = []
         for i in range(batch_obs.shape[0]):
             s = batch_obs[i].unsqueeze(0)
-            a_o = torch.nn.functional.one_hot(torch.unsqueeze(batch_acts_old[i], 0), 5)
+            # a_o = torch.nn.functional.one_hot(torch.unsqueeze(batch_acts_old[i], 0), 5)
             h_rnn = self.agents[num_agent].critic_rnn_hidden_dim
 
-            v_step, self.agents[num_agent].critic_rnn_hidden_dim = self.critic(s, a_o, h_rnn)
+            v_step, self.agents[num_agent].critic_rnn_hidden_dim = self.critic(s, h_rnn)
             V.append(v_step.squeeze(0))
 
         V = torch.stack(V, 0)
@@ -285,7 +288,7 @@ class PPO:
         for i in range(self.num_agents):
             self.agents[i].actor_rnn_hidden_dim = torch.zeros((episode_num, 64)).to(device)
             self.agents[i].critic_rnn_hidden_dim = torch.zeros((episode_num, 64)).to(device)
-            self.agents[i].targets_xy = -1000
+            self.agents[i].targets_xy = (0, 0)
             self.agents[i].agents_xy = []
 
     def update_xy(self, targets_xy, agents_xy):
@@ -327,10 +330,10 @@ def play_game(config, path_new_agent):
 
 if __name__ == '__main__':
 
-    n_agents = 4
+    n_agents = 64
     grid_config = GridConfig(num_agents=n_agents,
                              size=64,
-                             density=0.3,
+                             density=0.2 + 0.2*random.random(),
                              seed=None,
                              max_episode_steps=256,
                              obs_radius=5,
