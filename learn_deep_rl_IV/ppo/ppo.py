@@ -81,8 +81,11 @@ class PPO:
 
         self.n_updates_per_iteration = 10
         self.gamma = 0.99
+        self.gae_lambda = 0.95
+        self.beta = 0.0005
         self.clip = 0.2
-        self.lr = 0.0001
+        self.lr_actor = 1e-4
+        self.lr_critic = 1e-4
         self.num_agents = num_agents
 
         self.critic = PPOCritic(3, 64).to(device)
@@ -97,33 +100,41 @@ class PPO:
         for i in range(self.num_agents):
             self.agents.append(Agent())
 
-        self.actor_optim = SGD(self.actor.parameters(), lr=self.lr)
-        self.critic_optim = SGD(self.critic.parameters(), lr=self.lr)
+        self.actor_optim = SGD(self.actor.parameters(), lr=self.lr_actor)
+        self.critic_optim = SGD(self.critic.parameters(), lr=self.lr_critic)
 
 
     def learn(self, max_time_steps):
         t_so_far = 0
         mm = 0
         while t_so_far < max_time_steps:
-            batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_acts_old = self.rollout()
+            batch_obs, batch_acts, batch_log_probs, batch_rtgs, \
+            batch_lens, batch_acts_old, batch_exps, win = self.rollout()
             t_so_far += np.sum(batch_lens)
 
             self.init_hidden(1)
+            l1, l2, l3 = 0, 0, 0
             for i, agent in enumerate(self.agents):
 
-                V, _ = self.evaluate(batch_obs[:, i,:], batch_acts[:, i], batch_acts_old[:, i], i)
-                A_k = batch_rtgs[:, i] - V.detach()
-                # A_k = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
+                V, _, _ = self.evaluate(batch_obs[:, i, :], batch_acts[:, i], batch_acts_old[:, i], i)
+                traj_adv_v, traj_ref_v = self.calc_adv_ref(batch_rtgs[:, i], V, batch_exps[:, i])
+                # A_k = batch_rtgs[:, i] - V.detach()
+                # traj_adv_v = (traj_adv_v - traj_adv_v.mean()) / (traj_adv_v.std() + 1e-10)
+                len_traj = len(traj_adv_v)
 
                 for _ in range(self.n_updates_per_iteration):
                     self.init_hidden(1)
-                    V, curr_log_probs = self.evaluate(batch_obs[:, i,:], batch_acts[:, i], batch_acts_old[:, i], i)
-                    ratios = torch.exp(curr_log_probs - batch_log_probs[:, i])
-                    surr1 = ratios * A_k
-                    surr2 = torch.clamp(ratios, 1 - self.clip, 1 + self.clip) * A_k
+                    V, curr_log_probs, entropy = self.evaluate(batch_obs[:len_traj, i, :],
+                                                      batch_acts[:len_traj, i],
+                                                      batch_acts_old[:len_traj, i], i)
+                    ratios = torch.exp(curr_log_probs - batch_log_probs[:len_traj, i])
+                    surr1 = ratios * traj_adv_v
+                    surr2 = torch.clamp(ratios, 1 - self.clip, 1 + self.clip) * traj_adv_v
 
-                    actor_loss = (-torch.min(surr1, surr2)).mean()
-                    critic_loss = torch.nn.MSELoss()(V, batch_rtgs[:, i])
+                    a1 = (-torch.min(surr1, surr2)).mean()
+                    a2 = self.beta*torch.sum(entropy)
+                    actor_loss = a1 - a2
+                    critic_loss = torch.nn.MSELoss()(V, traj_ref_v)
 
                     self.actor_optim.zero_grad()
                     actor_loss.backward(retain_graph=True)
@@ -132,37 +143,47 @@ class PPO:
                     self.critic_optim.zero_grad()
                     critic_loss.backward()
                     self.critic_optim.step()
+
+                    l1 += a1.item()
+                    l2 += a2.item()
+                    l3 += critic_loss.item()
             mm += 1
             if mm % 1 == 0:
                 torch.save(self.actor.state_dict(), 'ppo_actor.pth')
                 torch.save(self.critic.state_dict(), 'ppo_critic.pth')
-                grid_config = GridConfig(num_agents=64,  # количество агентов на карте
-                                         size=64,  # размеры карты
-                                         density=0.3,  # плотность препятствий
-                                         seed=None,  # сид генерации задания
-                                         max_episode_steps=256,  # максимальная длина эпизода
-                                         obs_radius=5,  # радиус обзора
-                                         )
+                print('\tloss actor: {:.03f}, entropy: {:.03f}, loss critic: {:.03f},'
+                      ' win in game-train {}'.format(l1, l2, l3, win))
+                # grid_config = GridConfig(num_agents=64,  # количество агентов на карте
+                #                          size=64,  # размеры карты
+                #                          density=0.3,  # плотность препятствий
+                #                          seed=None,  # сид генерации задания
+                #                          max_episode_steps=256,  # максимальная длина эпизода
+                #                          obs_radius=5,  # радиус обзора
+                #                          )
+                #
+                # out = play_game(grid_config, 'ppo_actor.pth')
+                # print(out)
 
-                out = play_game(grid_config, 'ppo_actor.pth')
-                print(out)
 
-
-    def get_action(self, obs, a_old):
+    def get_action(self, obs, a_old, finish):
         actions = []
         log_probs = []
         for i, agent in enumerate(self.agents):
-            inp = torch.unsqueeze(torch.tensor(obs[i], dtype=torch.float), 0).to(device)
-            aold_tensor = torch.unsqueeze(torch.nn.functional.one_hot(torch.tensor(a_old[i]), 5), 0).to(device)
+            if finish[i] == True:
+                action_bot = 0
+                log_prob = 0.9
+            else:
+                inp = torch.unsqueeze(torch.tensor(obs[i], dtype=torch.float), 0).to(device)
+                aold_tensor = torch.unsqueeze(torch.nn.functional.one_hot(torch.tensor(a_old[i]), 5), 0).to(device)
 
-            act_bot, agent.actor_rnn_hidden_dim = self.actor(inp, aold_tensor, agent.actor_rnn_hidden_dim)
+                act_bot, agent.actor_rnn_hidden_dim = self.actor(inp, aold_tensor, agent.actor_rnn_hidden_dim)
 
-            act_bot_probs = torch.nn.Softmax(1)(act_bot)
-            action_bot = torch.multinomial(act_bot_probs, 1).item()
-            log_prob = torch.log(act_bot_probs[0, action_bot])
+                act_bot_probs = torch.nn.Softmax(1)(act_bot)
+                action_bot = torch.multinomial(act_bot_probs, 1).item()
+                log_prob = torch.log(act_bot_probs[0, action_bot]).item()
 
             actions.append(action_bot)
-            log_probs.append(log_prob.item())
+            log_probs.append(log_prob)
         return np.array(actions), np.array(log_probs)
 
     def rollout(self):
@@ -172,17 +193,19 @@ class PPO:
         batch_log_probs = []
         batch_rews = []
         batch_lens = []
+        batch_exp = []
 
 
         t = 0
         obs = self.env.reset()
         self.init_hidden(1)
-
+        n_agents = len(obs)
         # Rewards this episode
         ep_rews = []
-        done = [False] * len(obs)
-        finish = [False] * len(obs)
+        done = [False] * n_agents
+        finish = [False] * n_agents
         ep_t = 0
+        rewards_game = [[] for _ in range(n_agents)]
 
         targets_xy = self.env.get_targets_xy_relative()
         agents_xy = self.env.get_agents_xy_relative()
@@ -190,18 +213,24 @@ class PPO:
 
         while not all(done):
             if ep_t == 0:
-                batch_acts_old.append([0] * len(obs))
+                batch_acts_old.append([0] * n_agents)
             else:
                 batch_acts_old.append(batch_acts[-1])
             batch_obs.append(obs)
             with torch.no_grad():
-                action, log_prob = self.get_action(obs, batch_acts_old[-1])
+                action, log_prob = self.get_action(obs, batch_acts_old[-1], finish)
             obs, rew, done, _ = self.env.step(action)
 
-
+            exp = [0] * n_agents
             for y, a_done in enumerate(done):
                 if a_done == True:
-                    finish[y] = True
+                    if finish[y] == False:
+                        exp[y] = 1
+                        finish[y] = True
+                    else:
+                        exp[y] = 2
+
+            batch_exp.append(exp)
 
             ep_rews.append(self.get_reward(rew, finish))
             batch_acts.append(action)
@@ -212,9 +241,14 @@ class PPO:
             agents_xy = self.env.get_agents_xy_relative()
             self.update_xy(targets_xy, agents_xy)
 
+            for robot in range(n_agents):
+                rewards_game[robot].append(rew[robot])
 
         batch_lens.append(ep_t)
         batch_rews.append(ep_rews)
+
+        target = [sum(x) for x in rewards_game]
+        win = sum(target)
 
         # Reshape data as tensors in the shape specified before returning
 
@@ -223,7 +257,8 @@ class PPO:
         batch_acts_old = torch.tensor(np.array(batch_acts_old), dtype=torch.long).to(device)
         batch_log_probs = torch.tensor(np.array(batch_log_probs), dtype=torch.float).to(device)
         batch_rtgs = self.compute_rtgs(batch_rews).to(device)
-        return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_acts_old
+        batch_exps = torch.tensor(batch_exp, dtype=torch.long).to(device)
+        return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_acts_old, batch_exps, win
 
     def get_reward(self, step_reward, finish):
         dist_agents = self.env.get_agents_xy_relative()
@@ -235,12 +270,12 @@ class PPO:
 
             if sr == 1.0:
                 rew.append(1)
-            elif da in agent.agents_xy:
-                rew.append(-0.02)
-            elif h_new < h_old:
-                rew.append(0.02)
             elif f == True:
                 rew.append(0)
+            # elif h_new < h_old:
+            #     rew.append(0.02)
+            elif da in agent.agents_xy:
+                rew.append(-0.02)
             else:
                 rew.append(-0.01)
 
@@ -248,27 +283,57 @@ class PPO:
 
     def compute_rtgs(self, batch_rews):
         batch_rtgs = []
-        for ep_rews in reversed(batch_rews):
-            discounted_reward = [0] * len(ep_rews[0]) # The discounted reward so far
-            for rew in reversed(ep_rews):
-                discounted_reward = [x + y * self.gamma for x, y in zip(rew, discounted_reward)]
-                batch_rtgs.insert(0, discounted_reward)
+
+        for ep_rews in batch_rews:
+            for rew in ep_rews:
+                batch_rtgs.append(rew)
+        # for ep_rews in reversed(batch_rews):
+        #     discounted_reward = [0] * len(ep_rews[0]) # The discounted reward so far
+        #     for rew in reversed(ep_rews):
+        #         discounted_reward = [x + y * self.gamma for x, y in zip(rew, discounted_reward)]
+        #         batch_rtgs.insert(0, discounted_reward)
         batch_rtgs = torch.tensor(batch_rtgs, dtype=torch.float)
         return batch_rtgs
+
+    def calc_adv_ref(self, rews, values_v, exps_v):
+        values = values_v.squeeze().data.cpu().numpy()
+        rewards = rews.squeeze().data.cpu().numpy()
+        exps = exps_v.squeeze().data.cpu().numpy()
+        last_gae = 0.0
+        result_adv = []
+        result_ref = []
+        v = reversed(values[:-1])
+        v_p1 = reversed(values[1:])
+        rew = reversed(rewards[:-1])
+        ex = reversed(exps[:-1])
+        for val, next_val, reward, exp in zip(v, v_p1, rew, ex):
+            if exp == 2:
+                continue
+            if exp == 1:
+                delta = reward - val
+                last_gae = delta
+            else:
+                delta = reward + self.gamma * next_val - val
+                last_gae = delta + self.gamma * self.gae_lambda * last_gae
+            result_adv.append(last_gae)
+            result_ref.append(last_gae + val)
+
+        adv_v = torch.FloatTensor(list(reversed(result_adv))).to(device)
+        ref_v = torch.FloatTensor(list(reversed(result_ref))).to(device)
+        return adv_v, ref_v
 
     def evaluate(self, batch_obs, batch_acts, batch_acts_old, num_agent):
         V = []
         for i in range(batch_obs.shape[0]):
             s = batch_obs[i].unsqueeze(0)
-            # a_o = torch.nn.functional.one_hot(torch.unsqueeze(batch_acts_old[i], 0), 5)
             h_rnn = self.agents[num_agent].critic_rnn_hidden_dim
-
             v_step, self.agents[num_agent].critic_rnn_hidden_dim = self.critic(s, h_rnn)
             V.append(v_step.squeeze(0))
 
         V = torch.stack(V, 0)
 
         Lo = []
+        entropy = []
         for i in range(batch_obs.shape[0]):
             s = batch_obs[i].unsqueeze(0)
             a_o = torch.nn.functional.one_hot(torch.unsqueeze(batch_acts_old[i], 0), 5)
@@ -279,10 +344,12 @@ class PPO:
             log_prob = torch.log(act_bot_probs[0, batch_acts[i]])
             # A.append(act_bot)
             Lo.append(log_prob)
+            entropy.append(-torch.sum(act_bot_probs*torch.log(act_bot_probs)))
 
         log_prob = torch.stack(Lo, 0)
+        entr = torch.stack(entropy, 0)
 
-        return V.squeeze(1), log_prob
+        return V.squeeze(1), log_prob, entr
 
     def init_hidden(self, episode_num):
         for i in range(self.num_agents):
@@ -297,52 +364,21 @@ class PPO:
             self.agents[i].agents_xy.append(agents_xy[i])
 
 
-def play_game(config, path_new_agent):
-    env = gym.make("Pogema-v0", grid_config=config)
-    obs = env.reset()
-
-    num_as = len(obs)
-    our_agent = PPO(env, num_as, path_to_actor=path_new_agent)
-    our_agent.actor.eval()
-    our_agent.init_hidden(1)
-
-    # Rewards this episode
-    done = [False] * num_as
-    rewards_game = [[] for _ in range(num_as)]
-    batch_acts_old = []
-    ep_t = 0
-    while not all(done):
-        if ep_t == 0:
-            batch_acts_old.append([0] * len(obs))
-        else:
-            batch_acts_old.append(action)
-        action, _ = our_agent.get_action(obs, batch_acts_old[-1])
-        obs, rew, done, _ = env.step(action)
-
-        for robot in range(num_as):
-            rewards_game[robot].append(rew[robot])
-
-    target = [sum(x) for x in rewards_game]
-    win = sum(target)
-    csr = 1 if win == num_as else 0
-    return win, csr
 
 
 if __name__ == '__main__':
 
-    n_agents = 64
+    n_agents = 60
     grid_config = GridConfig(num_agents=n_agents,
-                             size=64,
-                             density=0.2 + 0.2*random.random(),
+                             size=60,
+                             density=0.3,
                              seed=None,
                              max_episode_steps=256,
                              obs_radius=5,
                              )
     env = gym.make("Pogema-v0", grid_config=grid_config)
 
-    model = PPO(env, n_agents, path_to_actor='model_50.pth')
-    model.learn(1_000_000)
-
-
-
+    model = PPO(env, n_agents, path_to_actor='ppo_actor.pth', path_to_critic='ppo_critic.pth')
+    # model = PPO(env, n_agents, path_to_actor='model_50.pth')
+    model.learn(10_000_000)
 
