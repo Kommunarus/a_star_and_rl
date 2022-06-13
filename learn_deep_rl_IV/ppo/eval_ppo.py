@@ -49,9 +49,9 @@ def play_game(config, path_new_agent):
 
 if __name__ == '__main__':
 
-    n_agents = 64
+    n_agents = 60
     grid_config = GridConfig(num_agents=n_agents,
-                             size=64,
+                             size=60,
                              density=0.3,
                              seed=None,
                              max_episode_steps=256,

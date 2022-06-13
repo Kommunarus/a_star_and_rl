@@ -82,10 +82,10 @@ class PPO:
         self.n_updates_per_iteration = 10
         self.gamma = 0.99
         self.gae_lambda = 0.95
-        self.beta = 0.0005
-        self.clip = 0.2
-        self.lr_actor = 1e-4
-        self.lr_critic = 1e-4
+        self.beta = 0.005
+        self.clip = 0.05
+        self.lr_actor = 0.5e-5
+        self.lr_critic = 0.5e-4
         self.num_agents = num_agents
 
         self.critic = PPOCritic(3, 64).to(device)
@@ -100,8 +100,8 @@ class PPO:
         for i in range(self.num_agents):
             self.agents.append(Agent())
 
-        self.actor_optim = SGD(self.actor.parameters(), lr=self.lr_actor)
-        self.critic_optim = SGD(self.critic.parameters(), lr=self.lr_critic)
+        self.actor_optim = Adam(self.actor.parameters(), lr=self.lr_actor)
+        self.critic_optim = Adam(self.critic.parameters(), lr=self.lr_critic)
 
 
     def learn(self, max_time_steps):
@@ -132,7 +132,7 @@ class PPO:
                     surr2 = torch.clamp(ratios, 1 - self.clip, 1 + self.clip) * traj_adv_v
 
                     a1 = (-torch.min(surr1, surr2)).mean()
-                    a2 = self.beta*torch.sum(entropy)
+                    a2 = self.beta*torch.mean(entropy)
                     actor_loss = a1 - a2
                     critic_loss = torch.nn.MSELoss()(V, traj_ref_v)
 
@@ -152,7 +152,9 @@ class PPO:
                 torch.save(self.actor.state_dict(), 'ppo_actor.pth')
                 torch.save(self.critic.state_dict(), 'ppo_critic.pth')
                 print('\tloss actor: {:.03f}, entropy: {:.03f}, loss critic: {:.03f},'
-                      ' win in game-train {}'.format(l1, l2, l3, win))
+                      ' win in game-train {}'.format(l1/self.n_updates_per_iteration,
+                                                     l2/self.n_updates_per_iteration,
+                                                     l3/self.n_updates_per_iteration, win))
                 # grid_config = GridConfig(num_agents=64,  # количество агентов на карте
                 #                          size=64,  # размеры карты
                 #                          density=0.3,  # плотность препятствий
@@ -272,8 +274,8 @@ class PPO:
                 rew.append(1)
             elif f == True:
                 rew.append(0)
-            # elif h_new < h_old:
-            #     rew.append(0.02)
+            elif h_new < h_old:
+                rew.append(0.02)
             elif da in agent.agents_xy:
                 rew.append(-0.02)
             else:
