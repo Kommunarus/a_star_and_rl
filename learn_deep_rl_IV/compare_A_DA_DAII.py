@@ -75,7 +75,7 @@ def play_deep_a_star(path):
 if __name__ == '__main__':
     counter = collections.Counter()
     n_games = 100
-    for size in [15, 30, 60]:
+    for size in [15, 30, 60, ]:
         isr_dn = []
         csr_dn = []
         isr_do = []
@@ -87,26 +87,27 @@ if __name__ == '__main__':
             grid_config = GridConfig(num_agents=size,  # количество агентов на карте
                                          size=size,  # размеры карты
                                          density=0.3,  # плотность препятствий
-                                         seed=random.randint(0, 922337203685),  # сид генерации задания
+                                         seed=None,  # сид генерации задания
+                                         # seed=random.randint(0, 922337203685),  # сид генерации задания
                                          max_episode_steps=256,  # максимальная длина эпизода
                                          obs_radius=5,  # радиус обзора
                                          )
 
-            winDO, csrDO = play_deep_a_star('ppo/model_50.pth')
+            # print(episod)
+            # winDO, csrDO = play_deep_a_star('ppo/model_50.pth')
+            # isr_do.append(winDO)
+            # csr_do.append(csrDO)
             winDN, csrDN = play_deep_a_star('ppo/ppo_actor.pth')
-            winA, csrA = play_a_star()
-
             isr_dn.append(winDN)
             csr_dn.append(csrDN)
-            isr_do.append(winDO)
-            csr_do.append(csrDO)
-            isr_a.append(winA)
-            csr_a.append(csrA)
+            # winA, csrA = play_a_star()
+            # isr_a.append(winA)
+            # csr_a.append(csrA)
 
         # if step_deepA - step_A < -5:
         #     break
         # li.append(step_deepA - step_A)
+        print('Deep 1. csr {:.01f}%, isr {:.01f}%'.format(sum(csr_do)/(episod+1)*100, sum(isr_do)/(episod+1)*100))
+        print('Deep 2. csr {:.01f}%, isr {:.01f}%'.format(sum(csr_dn)/(episod+1)*100, sum(isr_dn)/(episod+1)*100))
+        print('A star. csr {:.01f}%, isr {:.01f}%'.format(sum(csr_a)/(episod+1)*100, sum(isr_a)/(episod+1)*100))
 
-        print('A star. csr {:.01f}%, isr {:.01f}%'.format(sum(csr_a)/n_games*100, sum(isr_a)/n_games*100))
-        print('Deep 1. csr {:.01f}%, isr {:.01f}%'.format(sum(csr_do)/n_games*100, sum(isr_do)/n_games*100))
-        print('Deep 2. csr {:.01f}%, isr {:.01f}%'.format(sum(csr_dn)/n_games*100, sum(isr_dn)/n_games*100))
