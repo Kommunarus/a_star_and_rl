@@ -6,8 +6,8 @@ import gym
 from pogema import GridConfig
 import torch
 import torch.nn as nn
-from final.model_astar import Model as astarmodel
-from final.ppo import PPO
+from model_astar import Model as astarmodel
+from ppo import PPO
 
 device = torch.device('cuda:1')
 
@@ -25,6 +25,8 @@ class Net(nn.Module):
             nn.Linear(256, 2),
             nn.Softmax(dim=1)
         )
+        self.net.state_dict(torch.load('model/agent_4.pth'))
+
 
     def forward(self, x):
         return self.net(x)
@@ -41,7 +43,7 @@ class Net(nn.Module):
 class Model:
 
     def __init__(self):
-        self.our_agent = PPO(path_to_actor='ppo_actor_IV.pth')
+        self.our_agent = PPO(path_to_actor='ppo_actor.pth')
         self.our_agent.actor.eval()
         self.our_agent.init_hidden(1)
         self.batch_acts_old = []
@@ -63,12 +65,12 @@ class Model:
         return (action_deep, action_astar)
 
 
-def evaluate(nets, seed):
+def evaluate(nets, seed, n_agent, n_size):
     grid_config = GridConfig(num_agents=n_agent,  # количество агентов на карте
                              size=n_size,  # размеры карты
                              density=0.4,  # плотность препятствий
                              seed=seed,  # сид генерации задания
-                             max_episode_steps=256,  # максимальная длина эпизода
+                             max_episode_steps=max_episode_steps,  # максимальная длина эпизода
                              obs_radius=5,  # радиус обзора
                              )
 
@@ -83,10 +85,7 @@ def evaluate(nets, seed):
         action_deep, action_astar = classs.act(obs, done, env.get_agents_xy_relative(),
                                                env.get_targets_xy_relative())
 
-
-
         out_net = nets.select_action(obs, action_deep, action_astar)
-
 
         act = [x if z[0] > 0.5 else y for x, y, z in zip(action_deep, action_astar, out_net)]
         classs.action = act
@@ -98,16 +97,9 @@ def evaluate(nets, seed):
 
 
     target = [sum(x) for x in rewards_game]
-    win = sum(target)
+    win = sum(target)/n_agent
     csr = 1 if win == len(obs) else 0
     return win
-
-def get_action(nets, indx, s):
-    act = {}
-    for i in range(n_agent):
-        act[i] = torch.argmax(nets[i][indx[i]].select_action(s[i])).item()
-
-    return act
 
 
 def mutate_parent(nets):
@@ -118,21 +110,16 @@ def mutate_parent(nets):
         p.data += NOISE_STD * noise_t
     return new_net
 
-def get_nets(nets, indx):
-    out = []
-    for i in range(n_agent):
-        out.append(nets[i][indx[i]])
-    return out
-
-def get_random(n):
-    return [random.randint(0, POPULATION_SIZE-1) for i in range(n)]
 
 if __name__ == "__main__":
-    n_agent = 100
-    n_size = 100
+    max_episode_steps = 150
 
     n_state = 3*11*11
     n_action = 5
+    minagent = 40
+    maxagent = 70
+    minsize = 40
+    maxsize = 70
 
     gen_idx = 0
     nets = [
@@ -141,9 +128,11 @@ if __name__ == "__main__":
         ]
 
     seedi = random.randint(0, 10**10)
+    n_agent = random.randint(minagent, maxagent)
+    n_size = random.randint(minsize, maxsize)
 
     population = [
-        (nets[i], evaluate(nets[i], seedi)) for i in range(POPULATION_SIZE)
+        (nets[i], evaluate(nets[i], seedi, n_agent, n_size)) for i in range(POPULATION_SIZE)
     ]
 
     NOISE_STD = 0.5
@@ -158,26 +147,23 @@ if __name__ == "__main__":
         reward_max = np.max(rewards)
         reward_std = np.std(rewards)
 
-        print("%d: reward_mean=%.2f, reward_max=%.2f, "
+        print("n_agents %d, size: %d, reward_mean=%.2f, reward_max=%.2f, "
               "reward_std=%.2f" % (
-            gen_idx, reward_mean, reward_max, reward_std))
-        if reward_mean >= 95:
-            good_step += 1
-            if good_step > max_good_steps:
-                print("Solved in %d steps" % gen_idx)
-                break
+            n_agent, n_size, reward_mean, reward_max, reward_std))
 
         prev_population = population
-        torch.save(population[0][0].state_dict(), 'model/agent.pkl')
+        torch.save(population[0][0].state_dict(), 'model/agent_5.pth')
 
         # generate next population
         # population = [population[0]]
         seedi = random.randint(0, 10**10)
-
+        n_agent = random.randint(minagent, maxagent)
+        n_size = random.randint(minsize, maxsize)
+        population = []
         for _ in range(POPULATION_SIZE):
             parent_idx = np.random.randint(0, PARENTS_COUNT)
             parent = prev_population[parent_idx][0]
             nets = mutate_parent(parent)
-            population.append((nets, evaluate(nets, seedi)))
+            population.append((nets, evaluate(nets, seedi, n_agent, n_size)))
         gen_idx += 1
         NOISE_STD = alfa * NOISE_STD

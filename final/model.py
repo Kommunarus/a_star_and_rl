@@ -16,22 +16,48 @@ class Model:
 
         self.solver = astarmodel()
         self.ep_t = 0
+        self.history = None
+        self.history2 = None
 
     def act(self, obs, dones, positions_xy, targets_xy) -> list:
+        if self.history is None:
+            self.history = [0,] * len(obs)
+        if self.history2 is None:
+            self.history2 = {i: [] for i in range(len(obs))}
+
         if self.ep_t == 0:
             self.batch_acts_old.append([0] * len(obs))
         else:
             self.batch_acts_old.append(self.action)
 
-        action_deep, _ = self.our_agent.get_action(obs, self.batch_acts_old[-1], len(obs))
+        # action_deep, _ = self.our_agent.get_action(obs, self.batch_acts_old[-1], len(obs))
         action_class = self.solver.act(obs, dones, positions_xy, targets_xy)
 
-        actions = [x if random.random() > 0.5 else y for x, y in zip(action_deep, action_class)]
+        # actions = []
+        # for robot in range(len(obs)):
+        #     if obs[robot][1][5, 4] == 1 or obs[robot][1][5, 6] == 1 or obs[robot][1][4, 5] == 1 or obs[robot][1][6, 5] == 1:
+        #         self.history[robot] += 1
+        #     else:
+        #         self.history[robot] = 0
+
+
+
+        # for i, (x, y) in enumerate(zip(action_deep, action_class)):
+        #     act = y
+        #     if self.history[i] > 5 or positions_xy[i] in self.history2[i]:
+        #         act = x
+        #     if self.history[i] > 10:
+        #         act = random.randint(1, 4)
+        #     actions.append(act)
+        actions = action_class
         self.action = actions
         self.ep_t += 1
 
         for agent_id in range(200,  len(obs)):
             actions.append(0)
+
+        for robot in range(len(obs)):
+            self.history2[robot].append(positions_xy[robot])
 
 
         return actions
