@@ -18,47 +18,25 @@ class Model:
         self.ep_t = 0
         self.history = None
         self.history2 = None
+        self.n_future = 3
 
     def act(self, obs, dones, positions_xy, targets_xy) -> list:
-        if self.history is None:
-            self.history = [0,] * len(obs)
-        if self.history2 is None:
-            self.history2 = {i: [] for i in range(len(obs))}
 
         if self.ep_t == 0:
             self.batch_acts_old.append([0] * len(obs))
+            # print(len(obs), min([min(t) for t in targets_xy]), max([max(t) for t in targets_xy]))
         else:
             self.batch_acts_old.append(self.action)
 
-        # action_deep, _ = self.our_agent.get_action(obs, self.batch_acts_old[-1], len(obs))
-        action_class = self.solver.act(obs, dones, positions_xy, targets_xy)
+        action_deep, _ = self.our_agent.get_action(obs, self.batch_acts_old[-1], len(obs))
+        # action_classic = self.solver.act(obs, dones, positions_xy, targets_xy)
 
-        # actions = []
-        # for robot in range(len(obs)):
-        #     if obs[robot][1][5, 4] == 1 or obs[robot][1][5, 6] == 1 or obs[robot][1][4, 5] == 1 or obs[robot][1][6, 5] == 1:
-        #         self.history[robot] += 1
-        #     else:
-        #         self.history[robot] = 0
-
-
-
-        # for i, (x, y) in enumerate(zip(action_deep, action_class)):
-        #     act = y
-        #     if self.history[i] > 5 or positions_xy[i] in self.history2[i]:
-        #         act = x
-        #     if self.history[i] > 10:
-        #         act = random.randint(1, 4)
-        #     actions.append(act)
-        actions = action_class
+        actions = action_deep
         self.action = actions
         self.ep_t += 1
 
         for agent_id in range(200,  len(obs)):
             actions.append(0)
-
-        for robot in range(len(obs)):
-            self.history2[robot].append(positions_xy[robot])
-
 
         return actions
 
@@ -68,7 +46,7 @@ if __name__ == '__main__':
         classs = Model()
         isr_do = []
         csr_do = []
-        grid_config = GridConfig(num_agents=60,  # количество агентов на карте
+        grid_config = GridConfig(num_agents=128,  # количество агентов на карте
                                      size=60,  # размеры карты
                                      density=0.3,  # плотность препятствий
                                      seed=None,  # сид генерации задания
@@ -91,8 +69,8 @@ if __name__ == '__main__':
 
 
         target = [sum(x) for x in rewards_game]
-        win = sum(target)
-        csr = 1 if win == len(obs) else 0
-        print('Игра {}. Результат: csr {}, isr {}'.format(episod+1, csr, win))
+        win = sum(target) / 128
+        # csr = 1 if win == len(obs) else 0
+        print('Игра {}. Результат isr {}'.format(episod+1, win))
         env.save_animation('render/game{}.svg'.format(episod+1))
 

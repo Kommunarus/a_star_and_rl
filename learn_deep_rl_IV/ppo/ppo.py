@@ -7,6 +7,8 @@ import torch.nn.functional as F
 import gym
 from pogema import GridConfig
 import random
+from model_astar import Model as astarmodel
+
 
 device = torch.device('cuda:1')
 
@@ -76,17 +78,17 @@ class Agent:
         self.agents_xy = []
 
 class PPO:
-    def __init__(self, env, num_agents=None, path_to_actor=None, path_to_critic=None):
-        self.env = env
+    def __init__(self, path_to_actor=None, path_to_critic=None):
+        # self.env = env
 
         self.n_updates_per_iteration = 10
         self.gamma = 0.99
         self.gae_lambda = 0.95
-        self.beta = 0.005
+        self.beta = 0.01
         self.clip = 0.05
         self.lr_actor = 0.5e-5
         self.lr_critic = 0.5e-4
-        self.num_agents = num_agents
+        # self.num_agents = num_agents
 
         self.critic = PPOCritic(3, 64).to(device)
         if path_to_critic is not None:
@@ -96,18 +98,45 @@ class PPO:
         if path_to_actor is not None:
             self.actor.load_state_dict(torch.load(path_to_actor))
 
-        self.agents = []
-        for i in range(self.num_agents):
-            self.agents.append(Agent())
+        # self.agents = []
+        # for i in range(self.num_agents):
+        #     self.agents.append(Agent())
 
         self.actor_optim = Adam(self.actor.parameters(), lr=self.lr_actor)
         self.critic_optim = Adam(self.critic.parameters(), lr=self.lr_critic)
 
 
     def learn(self, max_time_steps):
+        all_map = [(8, 32),
+                   (16, 32),
+                   (16, 64),
+                   (32, 32),
+                   (32, 64),
+                   (64, 32),
+                   (64, 64),
+                   (128, 64)]
+
+
         t_so_far = 0
         mm = 0
         while t_so_far < max_time_steps:
+            map = random.choices(all_map, weights=[0.2, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1 ,0.2], k=1)[0]
+            n_agents = map[0]
+            grid_config = GridConfig(num_agents=n_agents,
+                                     size=map[1],
+                                     density=0.3,
+                                     seed=None,
+                                     max_episode_steps=256,
+                                     obs_radius=5,
+                                     )
+            env = gym.make("Pogema-v0", grid_config=grid_config)
+            self.env = env
+            self.num_agents = n_agents
+            self.agents = []
+            for i in range(self.num_agents):
+                self.agents.append(Agent())
+            self.solver = astarmodel()
+
             batch_obs, batch_acts, batch_log_probs, batch_rtgs, \
             batch_lens, batch_acts_old, batch_exps, win = self.rollout()
             t_so_far += np.sum(batch_lens)
@@ -118,8 +147,6 @@ class PPO:
 
                 V, _, _ = self.evaluate(batch_obs[:, i, :], batch_acts[:, i], batch_acts_old[:, i], i)
                 traj_adv_v, traj_ref_v = self.calc_adv_ref(batch_rtgs[:, i], V, batch_exps[:, i])
-                # A_k = batch_rtgs[:, i] - V.detach()
-                # traj_adv_v = (traj_adv_v - traj_adv_v.mean()) / (traj_adv_v.std() + 1e-10)
                 len_traj = len(traj_adv_v)
 
                 for _ in range(self.n_updates_per_iteration):
@@ -152,19 +179,9 @@ class PPO:
                 torch.save(self.actor.state_dict(), 'ppo_actor.pth')
                 torch.save(self.critic.state_dict(), 'ppo_critic.pth')
                 print('\tloss actor: {:.03f}, entropy: {:.03f}, loss critic: {:.03f},'
-                      ' win in game-train {}'.format(l1/self.n_updates_per_iteration,
+                      ' win in game-train {:.03f} / {:d}'.format(l1/self.n_updates_per_iteration,
                                                      l2/self.n_updates_per_iteration,
-                                                     l3/self.n_updates_per_iteration, win))
-                # grid_config = GridConfig(num_agents=64,  # количество агентов на карте
-                #                          size=64,  # размеры карты
-                #                          density=0.3,  # плотность препятствий
-                #                          seed=None,  # сид генерации задания
-                #                          max_episode_steps=256,  # максимальная длина эпизода
-                #                          obs_radius=5,  # радиус обзора
-                #                          )
-                #
-                # out = play_game(grid_config, 'ppo_actor.pth')
-                # print(out)
+                                                     l3/self.n_updates_per_iteration, win/n_agents, n_agents))
 
 
     def get_action(self, obs, a_old, finish):
@@ -219,6 +236,9 @@ class PPO:
             else:
                 batch_acts_old.append(batch_acts[-1])
             batch_obs.append(obs)
+
+            action_classic = self.solver.act(obs, done, agents_xy, targets_xy)
+
             with torch.no_grad():
                 action, log_prob = self.get_action(obs, batch_acts_old[-1], finish)
             obs, rew, done, _ = self.env.step(action)
@@ -234,7 +254,7 @@ class PPO:
 
             batch_exp.append(exp)
 
-            ep_rews.append(self.get_reward(rew, finish))
+            ep_rews.append(self.get_reward(rew, finish, action, action_classic))
             batch_acts.append(action)
             batch_log_probs.append(log_prob)
             ep_t += 1
@@ -262,22 +282,24 @@ class PPO:
         batch_exps = torch.tensor(batch_exp, dtype=torch.long).to(device)
         return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_acts_old, batch_exps, win
 
-    def get_reward(self, step_reward, finish):
+    def get_reward(self, step_reward, finish, action, action_classic):
         dist_agents = self.env.get_agents_xy_relative()
         rew = []
-        for da, sr, f, agent in zip(dist_agents, step_reward, finish, self.agents):
+        for da, sr, f, agent, act, act_class in zip(dist_agents, step_reward, finish, self.agents, action, action_classic):
             h_new = abs(da[0] - agent.targets_xy[0]) + abs(da[1] - agent.targets_xy[1])  # Manhattan distance as a heuristic function
             h_old = abs(agent.agents_xy[-1][0] - agent.targets_xy[0]) + \
                     abs(agent.agents_xy[-1][1] - agent.targets_xy[1])  # Manhattan distance as a heuristic function
 
             if sr == 1.0:
-                rew.append(1)
+                rew.append(5)
             elif f == True:
                 rew.append(0)
-            elif h_new < h_old:
+            elif act == act_class:
+                rew.append(0.05)
+            elif (h_new < h_old): # and (not (da in agent.agents_xy)):
                 rew.append(0.02)
             elif da in agent.agents_xy:
-                rew.append(-0.02)
+                rew.append(-0.02 * sum([1 for x in agent.agents_xy if x == da]))
             else:
                 rew.append(-0.01)
 
@@ -370,17 +392,7 @@ class PPO:
 
 if __name__ == '__main__':
 
-    n_agents = 60
-    grid_config = GridConfig(num_agents=n_agents,
-                             size=60,
-                             density=0.3,
-                             seed=None,
-                             max_episode_steps=256,
-                             obs_radius=5,
-                             )
-    env = gym.make("Pogema-v0", grid_config=grid_config)
-
-    model = PPO(env, n_agents, path_to_actor='ppo_actor.pth', path_to_critic='ppo_critic.pth')
-    # model = PPO(env, n_agents, path_to_actor='model_50.pth')
+    # model = PPO(path_to_actor='ppo_actor.pth', path_to_critic='ppo_critic.pth')
+    model = PPO(path_to_actor='model_50.pth')
     model.learn(10_000_000)
 
