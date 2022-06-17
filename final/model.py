@@ -1,4 +1,7 @@
 import random
+
+import numpy as np
+
 from model_astar import Model as astarmodel
 from pogema.animation import AnimationMonitor
 
@@ -31,6 +34,16 @@ class Model:
         action_deep, _ = self.our_agent.get_action(obs, self.batch_acts_old[-1], len(obs))
         # action_classic = self.solver.act(obs, dones, positions_xy, targets_xy)
 
+        # actions = []
+        # for ag in range(len(obs)):
+        #     a = obs[ag][1]
+        #     if np.sum(a) <= 1:
+        #         actions.append(action_classic[ag])
+        #     else:
+        #         actions.append(action_deep[ag])
+
+
+
         actions = action_deep
         self.action = actions
         self.ep_t += 1
@@ -47,7 +60,7 @@ if __name__ == '__main__':
         isr_do = []
         csr_do = []
         grid_config = GridConfig(num_agents=128,  # количество агентов на карте
-                                     size=60,  # размеры карты
+                                     size=64,  # размеры карты
                                      density=0.3,  # плотность препятствий
                                      seed=None,  # сид генерации задания
                                      max_episode_steps=256,  # максимальная длина эпизода
