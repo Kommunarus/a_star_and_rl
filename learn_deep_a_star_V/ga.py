@@ -12,7 +12,18 @@ import collections
 import torch.multiprocessing as mp
 import time
 
-device = torch.device('cuda:1')
+device = torch.device('cuda:0')
+NOISE_STD = 0.01
+POPULATION_SIZE = 20
+PARENTS_COUNT = 5
+WORKERS_COUNT = 10
+SEEDS_PER_WORKER = POPULATION_SIZE // WORKERS_COUNT
+MAX_SEED = 2 ** 32 - 1
+all_map = [(4, 8), (8, 8),
+           (8, 16), (16, 16), (32, 16),
+           (8, 32), (16, 32), (32, 32), (64, 32), (128, 32),
+           (8, 64), (16, 64), (32, 64), (64, 64), (128, 64), (256, 64),
+           ]
 
 
 class Net(nn.Module):
@@ -21,7 +32,7 @@ class Net(nn.Module):
         self.dim_step = dim_step
         self.action_size = action_size
         self.net = nn.Sequential(
-            nn.Linear(obs_size + 2*action_size + dim_step, 256),
+            nn.Linear(obs_size + 2 + 1, 256),
             nn.ReLU(),
             nn.Linear(256, 2),
             nn.Softmax(dim=1)
@@ -34,9 +45,12 @@ class Net(nn.Module):
 
     def select_action(self, s, a1, a2, step):
         st = torch.from_numpy(np.array([s])).squeeze(0).to(device)
-        a1t = torch.nn.functional.one_hot(torch.tensor(a1), self.action_size).to(device)
-        a2t = torch.nn.functional.one_hot(torch.tensor(a2), self.action_size).to(device)
-        a3t = torch.nn.functional.one_hot(torch.tensor(step), self.dim_step).to(device)
+        # a1t = torch.nn.functional.one_hot(torch.tensor(a1), self.action_size).to(device)
+        # a2t = torch.nn.functional.one_hot(torch.tensor(a2), self.action_size).to(device)
+        # a3t = torch.nn.functional.one_hot(torch.tensor(step), self.dim_step).to(device)
+        a1t = torch.unsqueeze(torch.tensor(a1).to(device)/self.action_size, 1)
+        a2t = torch.unsqueeze(torch.tensor(a2).to(device)/self.action_size, 1)
+        a3t = torch.unsqueeze(torch.tensor(step).to(device)/self.dim_step, 1)
         st = torch.nn.Flatten()(st)
         input = torch.hstack([st, a1t, a2t, a3t]).to(torch.float)
         return self.forward(input)
@@ -81,7 +95,7 @@ def evaluate(env, net):
 
         out_net = net.select_action(obs, action_deep, action_astar, [step, ]*len(obs))
 
-        act = [x if z[0] > 0.5 else y for x, y, z in zip(action_deep, action_astar, out_net)]
+        act = [(x if z[0] > 0.5 else y) for x, y, z in zip(action_deep, action_astar, out_net)]
         classs.action = act
         step += 1
 
@@ -97,17 +111,17 @@ def evaluate(env, net):
 
 
 def mutate_net(net, seed, copy_net=True):
-    new_net = copy.deepcopy(net) if copy_net else net
+    new_net = copy.deepcopy(net).to(device) if copy_net else net
     np.random.seed(seed)
     for p in new_net.parameters():
-        noise_t = torch.tensor(np.random.normal(size=p.data.size()).astype(np.float32))
+        noise_t = torch.tensor(np.random.normal(size=p.data.size()).astype(np.float32)).to(device)
         p.data += NOISE_STD * noise_t
     return new_net
 
 
-def build_net(env, seeds):
+def build_net(seeds):
     torch.manual_seed(seeds[0])
-    net = Net(3*11*11, 5, 256)
+    net = Net(3*11*11, 5, 256).to(device)
     for seed in seeds[1:]:
         net = mutate_net(net, seed, copy_net=False)
     return net
@@ -116,17 +130,8 @@ def build_net(env, seeds):
 OutputItem = collections.namedtuple('OutputItem', field_names=['seeds', 'isr', 'steps'])
 
 
-def worker_func(input_queue, output_queue, param_env_queue):
-    param_env = param_env_queue.get()
-    grid_config = GridConfig(num_agents=param_env[0],
-                             size=param_env[1],
-                             density=0.3,
-                             seed=param_env[2],
-                             max_episode_steps=256,
-                             obs_radius=5,
-                             )
-
-    env = gym.make("Pogema-v0", grid_config=grid_config)
+def worker_func(input_queue, output_queue):
+    p = mp.current_process()
     cache = {}
 
     while True:
@@ -140,44 +145,43 @@ def worker_func(input_queue, output_queue, param_env_queue):
                 if net is not None:
                     net = mutate_net(net, net_seeds[-1])
                 else:
-                    net = build_net(env, net_seeds)
+                    net = build_net(net_seeds)
             else:
-                net = build_net(env, net_seeds)
+                net = build_net(net_seeds)
             new_cache[net_seeds] = net
             net = net.to(device)
-            isr, steps = evaluate(env, net)
+            isr, steps = 0, 0
+            for map in all_map:
+                grid_config = GridConfig(num_agents=map[0],
+                                         size=map[1],
+                                         density=0.3,
+                                         seed=None,
+                                         max_episode_steps=256,
+                                         obs_radius=5,
+                                         )
+
+                env = gym.make("Pogema-v0", grid_config=grid_config)
+
+                isr_one, steps_one = evaluate(env, net)
+                isr += isr_one
+                steps += steps_one
+            # print(p.name, isr, steps)
             output_queue.put(OutputItem(seeds=net_seeds, isr=isr, steps=steps))
         cache = new_cache
 
 
 if __name__ == "__main__":
 
-    all_map = [(4, 8), (8, 8),
-               (8, 16), (16, 16), (32, 16),
-               (8, 32), (16, 32), (32, 32), (64, 32), (128, 32),
-               (8, 64), (16, 64), (32, 64), (64, 64), (128, 64), (256, 64)]
-
-    NOISE_STD = 0.01
-    POPULATION_SIZE = 10
-    PARENTS_COUNT = 10
-    WORKERS_COUNT = 10
-    SEEDS_PER_WORKER = POPULATION_SIZE // WORKERS_COUNT
-    MAX_SEED = 2 ** 32 - 1
-
     mp.set_start_method('spawn')
 
     input_queues = []
     output_queue = mp.Queue(maxsize=WORKERS_COUNT)
-    param_env_queue = mp.Queue(maxsize=1)
 
-    map = random.choice(all_map)
-    print(map)
-    param_env_queue.put([map[0], map[1], random.randint(0, MAX_SEED)])
     workers = []
     for _ in range(WORKERS_COUNT):
         input_queue = mp.Queue(maxsize=1)
         input_queues.append(input_queue)
-        w = mp.Process(target=worker_func, args=(input_queue, output_queue, param_env_queue))
+        w = mp.Process(target=worker_func, args=(input_queue, output_queue))
         w.start()
         seeds = [(np.random.randint(MAX_SEED),) for _ in range(SEEDS_PER_WORKER)]
         input_queue.put(seeds)
@@ -201,13 +205,13 @@ if __name__ == "__main__":
         reward_std = np.std(rewards)
         speed = batch_steps / (time.time() - t_start)
         print("%d: reward_mean=%.2f, reward_max=%.2f, reward_std=%.2f, speed=%.2f f/s" % (
-            gen_idx, reward_mean, reward_max, reward_std, speed))
+            gen_idx+1, reward_mean, reward_max, reward_std, speed))
 
-        # elite = population[0]
-        torch.save(population[0][0].state_dict(), 'model/agent_best.pth')
-        map = random.choice(all_map)
-        param_env_queue.put([map[0], map[1], random.randint(MAX_SEED)])
-        print(map)
+        elite = population[0]
+        with open('elite_score.txt', 'a') as f:
+            f.write('{} {}\n'.format(elite[0], elite[1],))
+        # print(elite)
+        # torch.save(population[0][0].state_dict(), 'model/agent_best.pth')
 
         for worker_queue in input_queues:
             seeds = []

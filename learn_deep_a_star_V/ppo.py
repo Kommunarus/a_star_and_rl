@@ -3,7 +3,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
-device = torch.device('cpu')
+device = torch.device('cuda:0')
 
 class PPOActor(nn.Module):
     def __init__(self, input_shape, dop_input_shape, rnn_hidden_dim, n_actions):
@@ -46,7 +46,7 @@ class PPO:
 
         self.actor = PPOActor(3, 5, 64, 5).to(device)
         if path_to_actor is not None:
-            self.actor.load_state_dict(torch.load(path_to_actor, map_location=torch.device('cpu')))
+            self.actor.load_state_dict(torch.load(path_to_actor, map_location=torch.device('cuda:0')))
 
         self.agents = []
         for i in range(self.num_max_agents):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import gym
-import roboschool
+# import roboschool
 import collections
 import copy
 import time
@@ -75,7 +75,7 @@ OutputItem = collections.namedtuple('OutputItem', field_names=['seeds', 'reward'
 
 
 def worker_func(input_queue, output_queue):
-    env = gym.make("RoboschoolHalfCheetah-v1")
+    env = gym.make("MountainCarContinuous-v0")
     cache = {}
 
     while True:

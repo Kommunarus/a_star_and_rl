@@ -22,6 +22,7 @@ class Model:
         self.history = None
         self.history2 = None
         self.n_future = 3
+        self.steps = 0
 
     def act(self, obs, dones, positions_xy, targets_xy) -> list:
 
@@ -51,6 +52,21 @@ class Model:
         for agent_id in range(200,  len(obs)):
             actions.append(0)
 
+        # if self.steps == 255:
+        #     print(sum(dones), len(obs))
+        #     if len(obs) - sum(dones) < 10:
+        #         for a in range(len(obs)):
+        #             if not dones[a]:
+        #                 mm = obs[a][0].astype(int)
+        #                 aa = obs[a][1].astype(int)
+        #                 cc = obs[a][2].astype(int)
+        #
+        #                 mm[np.nonzero(aa)] = 9
+        #                 mm[np.nonzero(cc)] = 5
+        #                 print(mm)
+
+        self.steps += 1
+
         return actions
 
 if __name__ == '__main__':
@@ -59,7 +75,7 @@ if __name__ == '__main__':
         classs = Model()
         isr_do = []
         csr_do = []
-        grid_config = GridConfig(num_agents=128,  # количество агентов на карте
+        grid_config = GridConfig(num_agents=8,  # количество агентов на карте
                                      size=64,  # размеры карты
                                      density=0.3,  # плотность препятствий
                                      seed=None,  # сид генерации задания
