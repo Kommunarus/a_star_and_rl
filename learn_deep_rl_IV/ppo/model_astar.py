@@ -41,8 +41,8 @@ class AStar:
             for d in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
                 n = (u.i+d[0], u.j + d[1])
                 if n not in self.obstacles and n not in self.CLOSED and n not in self.other_agents:
-                    h = math.sqrt((n[0] - self.goal[0])**2 + (n[1] - self.goal[1])**2)
-                    # h = abs(n[0] - self.goal[0]) + abs(n[1] - self.goal[1])  # Manhattan distance as a heuristic function
+                    # h = math.sqrt((n[0] - self.goal[0])**2 + (n[1] - self.goal[1])**2)
+                    h = abs(n[0] - self.goal[0]) + abs(n[1] - self.goal[1])  # Manhattan distance as a heuristic function
                     heappush(self.OPEN, Node(n, u.g + 1, h))
                     self.CLOSED[n] = (u.i, u.j)  # store information about the predecessor
 
@@ -54,14 +54,16 @@ class AStar:
                 next_node = self.CLOSED[next_node]
         return next_node
 
-    def update_obstacles(self, obs, other_agents, n):
+    def update_obstacles(self, obs, other_agents, n, size_map):
         obstacles = np.transpose(np.nonzero(obs))  # get the coordinates of all obstacles in current observation
+        self.obstacles.clear()  # forget previously seen agents as they move
         for obstacle in obstacles:
-            self.obstacles.add((n[0] + obstacle[0], n[1] + obstacle[1]))  # save them with correct coordinates
+            self.obstacles.add((obstacle[0] - (size_map + 9) + n[0] + 5,
+                                obstacle[1] - (size_map + 9) + n[1] + 5))  # save them with correct coordinates
         self.other_agents.clear()  # forget previously seen agents as they move
         agents = np.transpose(np.nonzero(other_agents))  # get the coordinates of all agents that are seen
-        for agent in agents:
-            self.other_agents.add((n[0] + agent[0], n[1] + agent[1]))  # save them with correct coordinates
+        # for agent in agents:
+        #     self.other_agents.add((n[0] + agent[0], n[1] + agent[1]))  # save them with correct coordinates
 
 
 class Model:
@@ -70,7 +72,7 @@ class Model:
         self.actions = {tuple(GridConfig().MOVES[i]): i for i in
                         range(len(GridConfig().MOVES))}  # make a dictionary to translate coordinates of actions into id
 
-    def act(self, obs, dones, positions_xy, targets_xy) -> list:
+    def act(self, obs, dones, positions_xy, targets_xy, all_map, all_agent, size_map) -> list:
         if self.agents is None:
             self.agents = [AStar() for _ in range(len(obs))]  # create a planner for each of the agents
         actions = []
@@ -78,7 +80,15 @@ class Model:
             if positions_xy[k] == targets_xy[k]:  # don't waste time on the agents that have already reached their goals
                 actions.append(0)  # just add useless action to save the order and length of the actions
                 continue
-            self.agents[k].update_obstacles(obs[k][0], obs[k][1], (positions_xy[k][0] - 5, positions_xy[k][1] - 5))
+
+            full_map = np.hstack([all_map, np.zeros((size_map+10, all_agent[k][1]))])
+            full_map = np.hstack([np.zeros((size_map+10, size_map + 10 - all_agent[k][1] - 1)), full_map])
+            full_map = np.vstack([full_map, np.zeros((all_agent[k][0], 2*(size_map + 10) - 1))])
+            full_map = np.vstack([np.zeros((size_map + 10 - all_agent[k][0] - 1, 2*(size_map + 10) - 1)), full_map])
+
+
+            self.agents[k].update_obstacles(full_map, obs[k][1], (positions_xy[k][0] - 5, positions_xy[k][1] - 5), size_map)
+            # self.agents[k].update_obstacles(obs[k][0], obs[k][1], (positions_xy[k][0] - 5, positions_xy[k][1] - 5))
             self.agents[k].compute_shortest_path(start=positions_xy[k], goal=targets_xy[k])
             next_node = self.agents[k].get_next_node()
             actions.append(self.actions[(next_node[0] - positions_xy[k][0], next_node[1] - positions_xy[k][1])])
@@ -87,10 +97,12 @@ class Model:
 
 def main():
     # Define random configuration
-    grid_config = GridConfig(num_agents=32,  # количество агентов на карте
-                             size=64,  # размеры карты
+    num_agents = 25
+    size = 32
+    grid_config = GridConfig(num_agents=num_agents,  # количество агентов на карте
+                             size=size,  # размеры карты
                              density=0.3,  # плотность препятствий
-                             seed=1,  # сид генерации задания
+                             seed=10,  # сид генерации задания
                              max_episode_steps=256,  # максимальная длина эпизода
                              obs_radius=5,  # радиус обзора
                              )
@@ -104,11 +116,16 @@ def main():
     done = [False for k in range(len(obs))]
     solver = Model()
     steps = 0
+    all_env = env.get_obstacles()
+    all_target = env.get_targets_xy()
     while not all(done):
+        all_agents = env.get_agents_xy()
+
         # Используем AStar
         obs, reward, done, info = env.step(solver.act(obs, done,
                                                       env.get_agents_xy_relative(),
-                                                      env.get_targets_xy_relative()))
+                                                      env.get_targets_xy_relative(),
+                                                      all_env, all_agents, size))
         steps += 1
         #print(steps, np.sum(done))
 

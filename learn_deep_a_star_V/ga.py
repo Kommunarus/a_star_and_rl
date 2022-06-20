@@ -14,16 +14,18 @@ import time
 
 device = torch.device('cuda:0')
 NOISE_STD = 0.01
-POPULATION_SIZE = 20
-PARENTS_COUNT = 5
+POPULATION_SIZE = 100
+PARENTS_COUNT = 10
 WORKERS_COUNT = 10
 SEEDS_PER_WORKER = POPULATION_SIZE // WORKERS_COUNT
 MAX_SEED = 2 ** 32 - 1
 all_map = [(4, 8), (8, 8),
            (8, 16), (16, 16), (32, 16),
-           (8, 32), (16, 32), (32, 32), (64, 32), (128, 32),
-           (8, 64), (16, 64), (32, 64), (64, 64), (128, 64), (256, 64),
+           (8, 32), (16, 32), (32, 32), (64, 32),# (128, 32),
+           (8, 64), (16, 64), (32, 64), (64, 64), #(128, 64), #(256, 64),
            ]
+
+seeds_for_game = [np.random.randint(MAX_SEED) for _ in range(200)]
 
 
 class Net(nn.Module):
@@ -105,7 +107,7 @@ def evaluate(env, net):
 
 
     target = [sum(x) for x in rewards_game]
-    isr = sum(target)/len(obs)
+    isr = sum(target)
     # csr = 1 if win == len(obs) else 0
     return isr, step
 
@@ -129,13 +131,23 @@ def build_net(seeds):
 
 OutputItem = collections.namedtuple('OutputItem', field_names=['seeds', 'isr', 'steps'])
 
+def savemodel(seed_elite):
+    torch.manual_seed(seed_elite[0])
+    net = Net(3 * 11 * 11, 5, 256)
+    for seed in seed_elite[1:]:
+        np.random.seed(seed)
+        for p in net.parameters():
+            noise_t = torch.tensor(np.random.normal(size=p.data.size()).astype(np.float32))
+            p.data += NOISE_STD * noise_t
+    torch.save(net.state_dict(), 'model/agent_best.pth')
+
 
 def worker_func(input_queue, output_queue):
     p = mp.current_process()
     cache = {}
 
     while True:
-        parents = input_queue.get()
+        sfg, parents = input_queue.get()
         if parents is None:
             break
         new_cache = {}
@@ -155,7 +167,7 @@ def worker_func(input_queue, output_queue):
                 grid_config = GridConfig(num_agents=map[0],
                                          size=map[1],
                                          density=0.3,
-                                         seed=None,
+                                         seed=sfg,
                                          max_episode_steps=256,
                                          obs_radius=5,
                                          )
@@ -178,13 +190,14 @@ if __name__ == "__main__":
     output_queue = mp.Queue(maxsize=WORKERS_COUNT)
 
     workers = []
+    sfg = seeds_for_game[0]
     for _ in range(WORKERS_COUNT):
         input_queue = mp.Queue(maxsize=1)
         input_queues.append(input_queue)
         w = mp.Process(target=worker_func, args=(input_queue, output_queue))
         w.start()
         seeds = [(np.random.randint(MAX_SEED),) for _ in range(SEEDS_PER_WORKER)]
-        input_queue.put(seeds)
+        input_queue.put([sfg, seeds])
 
     gen_idx = 0
     elite = None
@@ -204,14 +217,16 @@ if __name__ == "__main__":
         reward_max = np.max(rewards)
         reward_std = np.std(rewards)
         speed = batch_steps / (time.time() - t_start)
-        print("%d: reward_mean=%.2f, reward_max=%.2f, reward_std=%.2f, speed=%.2f f/s" % (
-            gen_idx+1, reward_mean, reward_max, reward_std, speed))
+        print("%d: reward_mean=%.2f, reward_max=%.2f, reward_std=%.2f, speed=%.2f f/s, seed_map %d" % (
+            gen_idx+1, reward_mean, reward_max, reward_std, speed, sfg))
 
         elite = population[0]
         with open('elite_score.txt', 'a') as f:
-            f.write('{} {}\n'.format(elite[0], elite[1],))
+            f.write('{} {} {}\n'.format(elite[0], elite[1], sfg))
         # print(elite)
-        # torch.save(population[0][0].state_dict(), 'model/agent_best.pth')
+        seed_elite = elite[0]
+        savemodel(seed_elite)
+        sfg = seeds_for_game[gen_idx+1]
 
         for worker_queue in input_queues:
             seeds = []
@@ -219,5 +234,5 @@ if __name__ == "__main__":
                 parent = np.random.randint(PARENTS_COUNT)
                 next_seed = np.random.randint(MAX_SEED)
                 seeds.append(tuple(list(population[parent][0]) + [next_seed]))
-            worker_queue.put(seeds)
+            worker_queue.put([sfg, seeds])
         gen_idx += 1

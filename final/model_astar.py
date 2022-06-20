@@ -41,8 +41,8 @@ class AStar:
             for d in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
                 n = (u.i+d[0], u.j + d[1])
                 if n not in self.obstacles and n not in self.CLOSED and n not in self.other_agents:
-                    # h = math.sqrt((n[0] - self.goal[0])**2 + (n[1] - self.goal[1])**2)
-                    h = abs(n[0] - self.goal[0]) + abs(n[1] - self.goal[1])  # Manhattan distance as a heuristic function
+                    h = math.sqrt((n[0] - self.goal[0])**2 + (n[1] - self.goal[1])**2)
+                    # h = abs(n[0] - self.goal[0]) + abs(n[1] - self.goal[1])  # Manhattan distance as a heuristic function
                     heappush(self.OPEN, Node(n, u.g + 1, h))
                     self.CLOSED[n] = (u.i, u.j)  # store information about the predecessor
 
