@@ -46,7 +46,7 @@ class PPO:
 
         self.actor = PPOActor(3, 5, 64, 5).to(device)
         if path_to_actor is not None:
-            self.actor.load_state_dict(torch.load(path_to_actor, map_location=torch.device('cpu')))
+            self.actor.load_state_dict(torch.load(path_to_actor, map_location=device))
 
         self.agents = []
         for i in range(self.num_max_agents):

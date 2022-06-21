@@ -41,8 +41,8 @@ class AStar:
             for d in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
                 n = (u.i+d[0], u.j + d[1])
                 if n not in self.obstacles and n not in self.CLOSED and n not in self.other_agents:
-                    h = math.sqrt((n[0] - self.goal[0])**2 + (n[1] - self.goal[1])**2)
-                    # h = abs(n[0] - self.goal[0]) + abs(n[1] - self.goal[1])  # Manhattan distance as a heuristic function
+                    # h = math.sqrt((n[0] - self.goal[0])**2 + (n[1] - self.goal[1])**2)
+                    h = abs(n[0] - self.goal[0]) + abs(n[1] - self.goal[1])  # Manhattan distance as a heuristic function
                     heappush(self.OPEN, Node(n, u.g + 1, h))
                     self.CLOSED[n] = (u.i, u.j)  # store information about the predecessor
 
@@ -58,10 +58,10 @@ class AStar:
         obstacles = np.transpose(np.nonzero(obs))  # get the coordinates of all obstacles in current observation
         for obstacle in obstacles:
             self.obstacles.add((n[0] + obstacle[0], n[1] + obstacle[1]))  # save them with correct coordinates
-        self.other_agents.clear()  # forget previously seen agents as they move
-        agents = np.transpose(np.nonzero(other_agents))  # get the coordinates of all agents that are seen
-        for agent in agents:
-            self.other_agents.add((n[0] + agent[0], n[1] + agent[1]))  # save them with correct coordinates
+        # self.other_agents.clear()  # forget previously seen agents as they move
+        # agents = np.transpose(np.nonzero(other_agents))  # get the coordinates of all agents that are seen
+        # for agent in agents:
+        #     self.other_agents.add((n[0] + agent[0], n[1] + agent[1]))  # save them with correct coordinates
 
 
 class Model:
