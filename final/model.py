@@ -8,6 +8,7 @@ from pogema.animation import AnimationMonitor
 
 from pogema import GridConfig
 from ppo import PPO
+from my_maps.maze import own_grid
 import gym
 from collections import Counter
 
@@ -66,15 +67,21 @@ if __name__ == '__main__':
         classs = Model(0.5)
         isr_do = []
         csr_do = []
-        grid_config = GridConfig(num_agents=64,  # количество агентов на карте
-                                     size=64,  # размеры карты
-                                     density=0.3,  # плотность препятствий
-                                     seed=None,  # сид генерации задания
-                                     max_episode_steps=256,  # максимальная длина эпизода
-                                     obs_radius=5,  # радиус обзора
-                                     )
+        # grid_config = GridConfig(num_agents=64,  # количество агентов на карте
+        #                              size=64,  # размеры карты
+        #                              density=0.3,  # плотность препятствий
+        #                              seed=None,  # сид генерации задания
+        #                              max_episode_steps=256,  # максимальная длина эпизода
+        #                              obs_radius=5,  # радиус обзора
+        #                              )
+        #
+        # env = gym.make("Pogema-v0", grid_config=grid_config)
+        size = 32
+        tt = random.choice([[1], [2], [3], [1, 3], [2, 3]])
 
-        env = gym.make("Pogema-v0", grid_config=grid_config)
+        grid = own_grid(tt, size)
+        grid_config = GridConfig(map=grid, num_agents=16, size=size, max_episode_steps=256, obs_radius=5)
+        env = gym.make('Pogema-v0', grid_config=grid_config)
         env = AnimationMonitor(env)
         obs = env.reset()
         done = [False for k in range(len(obs))]
@@ -91,6 +98,6 @@ if __name__ == '__main__':
         target = [sum(x) for x in rewards_game]
         win = sum(target) / len(obs)
         # csr = 1 if win == len(obs) else 0
-        print('Игра {}. Результат isr {}'.format(episod+1, win))
+        print('Игра {}. Результат isr {}. {}'.format(episod+1, win, tt))
         env.save_animation('render/game{}.svg'.format(episod+1))
 

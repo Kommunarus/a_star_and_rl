@@ -7,12 +7,10 @@ import torch.nn.functional as F
 import gym
 from pogema import GridConfig
 import random
-from zero.model import Model as modelastar
-from learn_deep_rl_IV.ppo.ppo import PPO as ppo_deepa
-
-
+from model_astar import Model as astarmodel
 
 device = torch.device('cuda:1')
+
 
 class PPOActor(nn.Module):
     def __init__(self, input_shape, dop_input_shape, rnn_hidden_dim, n_actions):
@@ -30,18 +28,19 @@ class PPOActor(nn.Module):
             nn.Flatten(1)
         )
 
-        self.fc1 = nn.Linear(11*11*16 + dop_input_shape, self.rnn_hidden_dim)
+        self.fc1 = nn.Linear(11 * 11 * 16 + dop_input_shape, self.rnn_hidden_dim)
         self.rnn = nn.GRUCell(self.rnn_hidden_dim, self.rnn_hidden_dim)
         self.fc2 = nn.Linear(self.rnn_hidden_dim, n_actions)
 
-    def forward(self, s, action_astar, action_deepa, hidden_state):
+    def forward(self, s, dopobs, hidden_state):
         aa_flat = self.feachextractor(s)
-        input = torch.hstack([aa_flat, action_astar, action_deepa])
+        input = torch.hstack([aa_flat, dopobs])
         x = F.relu(self.fc1(input))
         h_in = hidden_state.reshape(-1, self.rnn_hidden_dim)
         h = self.rnn(x, h_in)
         q = self.fc2(h)
         return q, torch.unsqueeze(h.detach(), 1)
+
 
 class PPOCritic(nn.Module):
     def __init__(self, input_shape, rnn_hidden_dim):
@@ -59,7 +58,7 @@ class PPOCritic(nn.Module):
             nn.Flatten(1)
         )
 
-        self.fc1 = nn.Linear(11*11*16, self.rnn_hidden_dim)
+        self.fc1 = nn.Linear(11 * 11 * 16, self.rnn_hidden_dim)
         self.rnn = nn.GRUCell(self.rnn_hidden_dim, self.rnn_hidden_dim)
         self.fc2 = nn.Linear(self.rnn_hidden_dim, 1)
 
@@ -72,6 +71,7 @@ class PPOCritic(nn.Module):
         q = self.fc2(h)
         return q, torch.unsqueeze(h.detach(), 1)
 
+
 class Agent:
     def __init__(self):
         self.critic_rnn_hidden_dim = torch.zeros((1, 64), dtype=torch.float).to(device)
@@ -79,78 +79,102 @@ class Agent:
         self.targets_xy = (0, 0)
         self.agents_xy = []
 
-class PPO:
-    def __init__(self, env, num_agents=None, path_to_actor=None, path_to_critic=None):
-        self.env = env
 
-        self.n_updates_per_iteration = 10
+class PPO:
+    def __init__(self, path_to_actor=None, path_to_critic=None):
+        # self.env = env
+
+        self.n_updates_per_iteration = 5
         self.gamma = 0.99
         self.gae_lambda = 0.95
-        self.beta = 0.005
-        self.clip = 0.05
-        self.lr_actor = 0.5e-5
-        self.lr_critic = 0.5e-4
-        self.num_agents = num_agents
+        self.beta = 0.001
+        self.clip = 0.15
+        self.lr_actor = 1e-5
+        self.lr_critic = 1e-4
+        # self.num_agents = num_agents
 
         self.critic = PPOCritic(3, 64).to(device)
         if path_to_critic is not None:
             self.critic.load_state_dict(torch.load(path_to_critic))
 
-        self.actor = PPOActor(3, 10, 64, 2).to(device)
+        self.actor = PPOActor(3, 5, 64, 5).to(device)
         if path_to_actor is not None:
             self.actor.load_state_dict(torch.load(path_to_actor))
 
-        self.agents = []
-        for i in range(self.num_agents):
-            self.agents.append(Agent())
+        # self.agents = []
+        # for i in range(self.num_agents):
+        #     self.agents.append(Agent())
 
         self.actor_optim = Adam(self.actor.parameters(), lr=self.lr_actor)
         self.critic_optim = Adam(self.critic.parameters(), lr=self.lr_critic)
 
-        self.solver_astar = modelastar()
-
-        self.our_agent = ppo_deepa(self.env, n_agents, path_to_actor='ppo_actor_IV.pth')
-        self.our_agent.actor.eval()
-        self.our_agent.init_hidden(1)
-
-
-
     def learn(self, max_time_steps):
+        # all_map = [(8, 32), (16, 32), (32, 32),(64, 32),(16, 64), (32, 64), (64, 64), (128, 64)]
+        all_map = [(4, 8),   (8, 8),
+                   (8, 16),  (16, 16), (32, 16),
+                   (8, 32), (16, 32), (32, 32), (64, 32), (128, 32),
+                   (8, 64), (16, 64), (32, 64), (64, 64), (128, 64), (256, 64)]
+
         t_so_far = 0
         mm = 0
+        last_isr = 0
+        count_repeat = 0
+        first = True
         while t_so_far < max_time_steps:
-            batch_obs, batch_acts, batch_log_probs, batch_rtgs, \
-            batch_lens, batch_acts_old, batch_exps, win, \
-            batch_acts_astar, batch_acts_deepa, batch_act_choice = self.rollout()
+            if last_isr != 1 and count_repeat <= -11 and not first:
+                # >AB02;O5< :0@BC
+                repeat = True
+                count_repeat += 1
+                pass
+            else:
+                repeat = False
+                first = False
+                count_repeat = 0
+                # print('-'.join(['']*100))
 
+                map = random.choice(all_map)
+                # map = random.choices(all_map, weights=[0.2, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.2], k=1)[0]
+                n_agents = map[0]
+                grid_config = GridConfig(num_agents=n_agents,
+                                         size=map[1],
+                                         density=0.3,
+                                         seed=None,
+                                         max_episode_steps=256,
+                                         obs_radius=5,
+                                         )
+                env = gym.make("Pogema-v0", grid_config=grid_config)
+                self.env = env
+                self.num_agents = n_agents
+                self.size_map = map[1]
+            self.agents = []
+            for i in range(self.num_agents):
+                self.agents.append(Agent())
+            self.solver = astarmodel()
+
+            batch_obs, batch_acts, batch_log_probs, batch_rtgs, \
+            batch_lens, batch_acts_old, batch_exps, win = self.rollout()
             t_so_far += np.sum(batch_lens)
 
             self.init_hidden(1)
             l1, l2, l3 = 0, 0, 0
             for i, agent in enumerate(self.agents):
 
-                V, _, _ = self.evaluate(batch_obs[:, i, :], i,
-                                        batch_acts_astar[:, i],
-                                        batch_acts_deepa[:, i],
-                                        batch_act_choice[:, i])
+                V, _, _ = self.evaluate(batch_obs[:, i, :], batch_acts[:, i], batch_acts_old[:, i], i)
                 traj_adv_v, traj_ref_v = self.calc_adv_ref(batch_rtgs[:, i], V, batch_exps[:, i])
-                # A_k = batch_rtgs[:, i] - V.detach()
-                # traj_adv_v = (traj_adv_v - traj_adv_v.mean()) / (traj_adv_v.std() + 1e-10)
                 len_traj = len(traj_adv_v)
+                # traj_adv_v = traj_adv_v  / torch.std(traj_adv_v)
 
                 for _ in range(self.n_updates_per_iteration):
                     self.init_hidden(1)
                     V, curr_log_probs, entropy = self.evaluate(batch_obs[:len_traj, i, :],
-                                                      i,
-                                                               batch_acts_astar[:len_traj, i],
-                                                               batch_acts_deepa[:len_traj, i],
-                                                               batch_act_choice[:len_traj, i])
+                                                               batch_acts[:len_traj, i],
+                                                               batch_acts_old[:len_traj, i], i)
                     ratios = torch.exp(curr_log_probs - batch_log_probs[:len_traj, i])
                     surr1 = ratios * traj_adv_v
                     surr2 = torch.clamp(ratios, 1 - self.clip, 1 + self.clip) * traj_adv_v
 
                     a1 = (-torch.min(surr1, surr2)).mean()
-                    a2 = self.beta*torch.mean(entropy)
+                    a2 = self.beta * torch.mean(entropy)
                     actor_loss = a1 - a2
                     critic_loss = torch.nn.MSELoss()(V, traj_ref_v)
 
@@ -166,77 +190,46 @@ class PPO:
                     l2 += a2.item()
                     l3 += critic_loss.item()
             mm += 1
+            last_isr = win / n_agents
             if mm % 1 == 0:
-                torch.save(self.actor.state_dict(), 'ppo_actor_V.pth')
-                torch.save(self.critic.state_dict(), 'ppo_critic_V.pth')
-                print('\tloss actor: {:.03f}, entropy: {:.03f}, loss critic: {:.03f},'
-                      ' win in game-train {}'.format(l1/self.n_updates_per_iteration,
-                                                     l2/self.n_updates_per_iteration,
-                                                     l3/self.n_updates_per_iteration, win))
-
+                torch.save(self.actor.state_dict(), 'ppo_actor.pth')
+                torch.save(self.critic.state_dict(), 'ppo_critic.pth')
+                print('{}. isr {:.03f} / ({:d}, {:d}) size {} \t\t {} loss actor: {:.03f}, entropy: {:.03f}, loss critic: {:.03f},'
+                      ''.format(mm, win / n_agents, int(win), int(n_agents), map[1], '   repeat' if repeat else '',
+                                                                       l1 / self.n_updates_per_iteration,
+                                                                       l2 / self.n_updates_per_iteration,
+                                                                       l3 / self.n_updates_per_iteration,
+                                                                       ))
 
     def get_action(self, obs, a_old, finish):
         actions = []
-        actions_astar = []
-        actions_deepa = []
-        choices = []
         log_probs = []
-        action_astar = self.solver_astar.act(obs, None, self.env.get_agents_xy_relative(),
-                                             self.env.get_targets_xy_relative())
-
-        action_deepa, _ = self.our_agent.get_action(obs, a_old, finish)
-
-
         for i, agent in enumerate(self.agents):
             if finish[i] == True:
                 action_bot = 0
-                astar = 0
-                deepa = 0
-                choice = 0
                 log_prob = 0.9
             else:
                 inp = torch.unsqueeze(torch.tensor(obs[i], dtype=torch.float), 0).to(device)
+                aold_tensor = torch.unsqueeze(torch.nn.functional.one_hot(torch.tensor(a_old[i]), 5), 0).to(device)
 
-                astar_tensor = torch.unsqueeze(torch.nn.functional.one_hot(torch.tensor(action_astar[i]), 5), 0).to(device)
-                deepa_tensor = torch.unsqueeze(torch.nn.functional.one_hot(torch.tensor(action_deepa[i]), 5), 0).to(device)
-
-                act_bot, agent.actor_rnn_hidden_dim = self.actor(inp, astar_tensor, deepa_tensor, agent.actor_rnn_hidden_dim)
+                act_bot, agent.actor_rnn_hidden_dim = self.actor(inp, aold_tensor, agent.actor_rnn_hidden_dim)
 
                 act_bot_probs = torch.nn.Softmax(1)(act_bot)
-                action_bot_choice = torch.multinomial(act_bot_probs, 1).item()
-                log_prob = torch.log(act_bot_probs[0, action_bot_choice]).item()
-
-                if action_bot_choice == 0:
-                    action_bot = action_astar[i]
-                    choice = 0
-                else:
-                    action_bot = action_deepa[i]
-                    choice = 1
-
-                astar = action_astar[i]
-                deepa = action_deepa[i]
-
-
+                action_bot = torch.multinomial(act_bot_probs, 1).item()
+                log_prob = torch.log(act_bot_probs[0, action_bot]).item()
 
             actions.append(action_bot)
-            actions_astar.append(astar)
-            actions_deepa.append(deepa)
-            choices.append(choice)
             log_probs.append(log_prob)
-        return np.array(actions), np.array(log_probs), np.array(actions_astar), np.array(actions_deepa), np.array(choices)
+        return np.array(actions), np.array(log_probs)
 
     def rollout(self):
         batch_obs = []
         batch_acts = []
-        batch_acts_astar = []
-        batch_acts_deepa = []
         batch_acts_old = []
-        batch_acts_choice = []
         batch_log_probs = []
         batch_rews = []
         batch_lens = []
         batch_exp = []
-
 
         t = 0
         obs = self.env.reset()
@@ -259,8 +252,13 @@ class PPO:
             else:
                 batch_acts_old.append(batch_acts[-1])
             batch_obs.append(obs)
+            all_env = self.env.get_obstacles()
+            all_agents = self.env.get_agents_xy()
+
+            action_classic = self.solver.act(obs, done, agents_xy, targets_xy, all_env, all_agents, self.size_map)
+
             with torch.no_grad():
-                action, log_prob, act_astar, act_deepa, act_choice = self.get_action(obs, batch_acts_old[-1], finish)
+                action, log_prob = self.get_action(obs, batch_acts_old[-1], finish, )
             obs, rew, done, _ = self.env.step(action)
 
             exp = [0] * n_agents
@@ -273,12 +271,8 @@ class PPO:
                         exp[y] = 2
 
             batch_exp.append(exp)
-
-            ep_rews.append(self.get_reward(rew, finish))
+            ep_rews.append(self.get_reward(rew, finish, action, action_classic))
             batch_acts.append(action)
-            batch_acts_astar.append(act_astar)
-            batch_acts_deepa.append(act_deepa)
-            batch_acts_choice.append(act_choice)
             batch_log_probs.append(log_prob)
             ep_t += 1
             t += 1
@@ -299,35 +293,46 @@ class PPO:
 
         batch_obs = torch.tensor(np.array(batch_obs), dtype=torch.float).to(device)
         batch_acts = torch.tensor(np.array(batch_acts), dtype=torch.long).to(device)
-        batch_acts_astar = torch.tensor(np.array(batch_acts_astar), dtype=torch.long).to(device)
-        batch_acts_deepa = torch.tensor(np.array(batch_acts_deepa), dtype=torch.long).to(device)
         batch_acts_old = torch.tensor(np.array(batch_acts_old), dtype=torch.long).to(device)
         batch_log_probs = torch.tensor(np.array(batch_log_probs), dtype=torch.float).to(device)
         batch_rtgs = self.compute_rtgs(batch_rews).to(device)
         batch_exps = torch.tensor(batch_exp, dtype=torch.long).to(device)
-        batch_act_choices = torch.tensor(np.array(batch_acts_choice), dtype=torch.long).to(device)
-        return (batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_acts_old, batch_exps, win,
-                batch_acts_astar, batch_acts_deepa, batch_act_choices)
+        return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_acts_old, batch_exps, win
 
-    def get_reward(self, step_reward, finish):
+    def get_reward(self, step_reward, finish, action, action_classic):
         dist_agents = self.env.get_agents_xy_relative()
         rew = []
-        for da, sr, f, agent in zip(dist_agents, step_reward, finish, self.agents):
-            h_new = abs(da[0] - agent.targets_xy[0]) + abs(da[1] - agent.targets_xy[1])  # Manhattan distance as a heuristic function
-            h_old = abs(agent.agents_xy[-1][0] - agent.targets_xy[0]) + \
-                    abs(agent.agents_xy[-1][1] - agent.targets_xy[1])  # Manhattan distance as a heuristic function
-
+        have_good_f = False
+        step = 0
+        for da, sr, f, agent, act, act_class in zip(dist_agents, step_reward, finish, self.agents, action,
+                                                    action_classic):
+            # for da, sr, f, agent, act, act_class in zip(dist_agents, step_reward, finish, self.agents, action,
+            #                                             action_classic):
+            #     h_new = abs(da[0] - agent.targets_xy[0]) + abs(
+            #         da[1] - agent.targets_xy[1])  # Manhattan distance as a heuristic function
+            #     h_old = abs(agent.agents_xy[-1][0] - agent.targets_xy[0]) + \
+            #             abs(agent.agents_xy[-1][1] - agent.targets_xy[1])
+            #     koeff = 2 * step / 255 + 1
             if sr == 1.0:
                 rew.append(1)
+                # have_good_f = True
+            # else:
+            #     rew.append(0)
             elif f == True:
                 rew.append(0)
-            elif h_new < h_old:
-                rew.append(0.02)
             elif da in agent.agents_xy:
                 rew.append(-0.02)
+                # rew.append(-0.02 * sum([1 for x in agent.agents_xy if x == da]))
+            elif act == act_class:
+                rew.append(0.02)
+            # elif (h_new < h_old):  # and (not (da in agent.agents_xy)):
+            #     rew.append(0.02)
             else:
                 rew.append(-0.01)
 
+            step += 1
+        # if not have_good_f:
+        #     rew[-1] = -1
         return rew
 
     def compute_rtgs(self, batch_rews):
@@ -336,6 +341,11 @@ class PPO:
         for ep_rews in batch_rews:
             for rew in ep_rews:
                 batch_rtgs.append(rew)
+        # for ep_rews in reversed(batch_rews):
+        #     discounted_reward = [0] * len(ep_rews[0]) # The discounted reward so far
+        #     for rew in reversed(ep_rews):
+        #         discounted_reward = [x + y * self.gamma for x, y in zip(rew, discounted_reward)]
+        #         batch_rtgs.insert(0, discounted_reward)
         batch_rtgs = torch.tensor(batch_rtgs, dtype=torch.float)
         return batch_rtgs
 
@@ -366,7 +376,7 @@ class PPO:
         ref_v = torch.FloatTensor(list(reversed(result_ref))).to(device)
         return adv_v, ref_v
 
-    def evaluate(self, batch_obs, num_agent, batch_astar, batch_deepa, batch_act_ch):
+    def evaluate(self, batch_obs, batch_acts, batch_acts_old, num_agent):
         V = []
         for i in range(batch_obs.shape[0]):
             s = batch_obs[i].unsqueeze(0)
@@ -380,16 +390,15 @@ class PPO:
         entropy = []
         for i in range(batch_obs.shape[0]):
             s = batch_obs[i].unsqueeze(0)
-            a_star = torch.nn.functional.one_hot(torch.unsqueeze(batch_astar[i], 0), 5)
-            a_deep = torch.nn.functional.one_hot(torch.unsqueeze(batch_deepa[i], 0), 5)
+            a_o = torch.nn.functional.one_hot(torch.unsqueeze(batch_acts_old[i], 0), 5)
             h_rnn = self.agents[num_agent].actor_rnn_hidden_dim
 
-            act_bot, self.agents[num_agent].actor_rnn_hidden_dim = self.actor(s, a_star, a_deep, h_rnn)
+            act_bot, self.agents[num_agent].actor_rnn_hidden_dim = self.actor(s, a_o, h_rnn)
             act_bot_probs = torch.nn.Softmax(1)(act_bot)
-            log_prob = torch.log(act_bot_probs[0, batch_act_ch[i]])
+            log_prob = torch.log(act_bot_probs[0, batch_acts[i]])
             # A.append(act_bot)
             Lo.append(log_prob)
-            entropy.append(-torch.sum(act_bot_probs*torch.log(act_bot_probs)))
+            entropy.append(-torch.sum(act_bot_probs * torch.log(act_bot_probs)))
 
         log_prob = torch.stack(Lo, 0)
         entr = torch.stack(entropy, 0)
@@ -409,21 +418,9 @@ class PPO:
             self.agents[i].agents_xy.append(agents_xy[i])
 
 
-
-
 if __name__ == '__main__':
-
-    n_agents = 60
-    grid_config = GridConfig(num_agents=n_agents,
-                             size=60,
-                             density=0.3,
-                             seed=None,
-                             max_episode_steps=256,
-                             obs_radius=5,
-                             )
-    env = gym.make("Pogema-v0", grid_config=grid_config)
-
-    # model = PPO(env, n_agents, path_to_actor='ppo_actor.pth', path_to_critic='ppo_critic.pth')
-    model = PPO(env, n_agents)
+    # model = PPO(path_to_actor='ppo_actor.pth', )
+    model = PPO(path_to_actor='ppo_actor.pth', path_to_critic='ppo_critic.pth')
+    # model = PPO(env, n_agents, path_to_actor='model_50.pth')
     model.learn(10_000_000)
 
