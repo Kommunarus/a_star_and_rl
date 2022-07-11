@@ -27,9 +27,9 @@ def own_grid(variant, size=64):
         grid_np[:, n_col] = 1
 
         for row in n_row:
-            grid_np[row, np.random.randint(1, size-1, random.randint(1, size//16))] = 0
+            grid_np[row, np.random.randint(1, size-1, random.randint(1, size//16+1))] = 0
         for col in n_col:
-            grid_np[np.random.randint(1, size-1, random.randint(1, size//16)), col] = 0
+            grid_np[np.random.randint(1, size-1, random.randint(1, size//16+1)), col] = 0
 
         grid = ''
         for r in range(size):
@@ -54,7 +54,7 @@ def own_grid(variant, size=64):
         n_fi2 = np.random.uniform(size=len(n_lines2))
 
         for i, line in enumerate(n_lines1):
-            n_dirok = random.randint(1, size//16)
+            n_dirok = random.randint(1, size//16+1)
             x_dirki = random.choices(list(range(1, size-1)), k=n_dirok)
 
             fi = -math.pi/10 + 2*math.pi/10 * n_fi1[i]
@@ -76,7 +76,7 @@ def own_grid(variant, size=64):
                 grid_np[x_point, y] = 1
 
         for i, line in enumerate(n_lines2):
-            n_dirok = random.randint(1, size//16)
+            n_dirok = random.randint(1, size//16+1)
             y_dirki = random.choices(list(range(1, size-1)), k=n_dirok)
 
 
@@ -102,13 +102,13 @@ def own_grid(variant, size=64):
             grid += ''.join([Cell.BLOCKED if x == 1 else Cell.EMPTY for x in grid_np[r, :].tolist()]) + '\n'
 
     if 3 in variant:
-        n_kvadrat = random.randint(2, size//6)
+        n_kvadrat = random.randint(2, size//4)
         xs = np.random.randint(1, size-1, n_kvadrat)
         ys = np.random.randint(1, size-1, n_kvadrat)
         ds = np.random.randint(5, max(6, size-10), n_kvadrat)
 
         for i in range(n_kvadrat):
-            n_dirok = random.randint(0, size//16)
+            n_dirok = random.randint(1, size//16+1)
             x_dirki = random.choices(list(range(xs[i] - ds[i]//2, xs[i] + ds[i]//2)), k=n_dirok)
             for x in range(xs[i] - ds[i]//2, xs[i] + ds[i]//2):
                 if 0 <= x < size:
@@ -129,7 +129,7 @@ def own_grid(variant, size=64):
                             if 0 <= y2 < size:
                                 grid_np[x, y2] = 1
 
-            n_dirok = random.randint(0, size//16)
+            n_dirok = random.randint(1, size//16+1)
             y_dirki = random.choices(list(range(ys[i] - ds[i]//2, ys[i] + ds[i]//2)), k=n_dirok)
             for y in range(ys[i] - ds[i]//2, ys[i] + ds[i]//2):
                 if 0 <= y < size:
@@ -158,7 +158,7 @@ def own_grid(variant, size=64):
 
 if __name__ == '__main__':
 
-    grid = own_grid([3], 32)
+    grid = own_grid([3], 16)
     # Define new configuration with 8 randomly placed agents
     grid_config = GridConfig(map=grid, num_agents=16)
 

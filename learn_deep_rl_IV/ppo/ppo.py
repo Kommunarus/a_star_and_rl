@@ -18,20 +18,28 @@ class PPOActor(nn.Module):
         super(PPOActor, self).__init__()
         self.rnn_hidden_dim = rnn_hidden_dim
         self.feachextractor = nn.Sequential(
-            nn.Conv2d(input_shape, 16, 3, 1, 1),
+            nn.Conv2d(input_shape, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(16, 16, 3, 1, 1),
+            nn.Conv2d(32, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(16, 16, 3, 1, 1),
+            nn.Conv2d(32, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(16, 16, 3, 1, 1),
+            nn.Conv2d(32, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.Flatten(1)
         )
 
-        self.fc1 = nn.Linear(11 * 11 * 16 + dop_input_shape, self.rnn_hidden_dim)
+        self.fc1 = nn.Linear(11 * 11 * 32 + dop_input_shape, self.rnn_hidden_dim)
         self.rnn = nn.GRUCell(self.rnn_hidden_dim, self.rnn_hidden_dim)
-        self.fc2 = nn.Linear(self.rnn_hidden_dim, n_actions)
+        self.fc2 = nn.Linear(self.rnn_hidden_dim, 128)
+        self.fc3 = nn.Linear(128, n_actions)
 
     def forward(self, s, dopobs, hidden_state):
         aa_flat = self.feachextractor(s)
@@ -40,6 +48,8 @@ class PPOActor(nn.Module):
         h_in = hidden_state.reshape(-1, self.rnn_hidden_dim)
         h = self.rnn(x, h_in)
         q = self.fc2(h)
+        q = F.relu(q)
+        q = self.fc3(q)
         return q, torch.unsqueeze(h.detach(), 1)
 
 
@@ -48,20 +58,28 @@ class PPOCritic(nn.Module):
         super(PPOCritic, self).__init__()
         self.rnn_hidden_dim = rnn_hidden_dim
         self.feachextractor = nn.Sequential(
-            nn.Conv2d(input_shape, 16, 3, 1, 1),
+            nn.Conv2d(input_shape, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(16, 16, 3, 1, 1),
+            nn.Conv2d(32, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(16, 16, 3, 1, 1),
+            nn.Conv2d(32, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(16, 16, 3, 1, 1),
+            nn.Conv2d(32, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.Flatten(1)
         )
 
-        self.fc1 = nn.Linear(11 * 11 * 16, self.rnn_hidden_dim)
+        self.fc1 = nn.Linear(11 * 11 * 32, self.rnn_hidden_dim)
         self.rnn = nn.GRUCell(self.rnn_hidden_dim, self.rnn_hidden_dim)
-        self.fc2 = nn.Linear(self.rnn_hidden_dim, 1)
+        self.fc2 = nn.Linear(self.rnn_hidden_dim, 128)
+        self.fc3 = nn.Linear(128, 1)
 
     def forward(self, s, hidden_state):
         aa_flat = self.feachextractor(s)
@@ -70,13 +88,15 @@ class PPOCritic(nn.Module):
         h_in = hidden_state.reshape(-1, self.rnn_hidden_dim)
         h = self.rnn(x, h_in)
         q = self.fc2(h)
+        q = F.relu(q)
+        q = self.fc3(q)
         return q, torch.unsqueeze(h.detach(), 1)
 
 
 class Agent:
     def __init__(self):
-        self.critic_rnn_hidden_dim = torch.zeros((1, 64), dtype=torch.float).to(device)
-        self.actor_rnn_hidden_dim = torch.zeros((1, 64), dtype=torch.float).to(device)
+        self.critic_rnn_hidden_dim = torch.zeros((1, 512), dtype=torch.float).to(device)
+        self.actor_rnn_hidden_dim = torch.zeros((1, 512), dtype=torch.float).to(device)
         self.targets_xy = (0, 0)
         self.agents_xy = []
 
@@ -88,17 +108,17 @@ class PPO:
         self.n_updates_per_iteration = 5
         self.gamma = 0.99
         self.gae_lambda = 0.95
-        self.beta = 0.001
+        self.beta = 0.005
         self.clip = 0.15
         self.lr_actor = 1e-5
         self.lr_critic = 1e-4
         # self.num_agents = num_agents
 
-        self.critic = PPOCritic(3, 64).to(device)
+        self.critic = PPOCritic(3, 512).to(device)
         if path_to_critic is not None:
             self.critic.load_state_dict(torch.load(path_to_critic))
 
-        self.actor = PPOActor(3, 5, 64, 5).to(device)
+        self.actor = PPOActor(3, 5, 512, 5).to(device)
         if path_to_actor is not None:
             self.actor.load_state_dict(torch.load(path_to_actor))
 
@@ -111,17 +131,20 @@ class PPO:
 
     def learn(self, max_time_steps):
         # all_map = [(8, 32), (16, 32), (32, 32),(64, 32),(16, 64), (32, 64), (64, 64), (128, 64)]
-        all_map = [(8, 16),  (16, 16), (32, 16),
+        all_map = [(8, 16), (16, 16), (32, 16),
                    (8, 32), (16, 32), (32, 32), (64, 32), (128, 32),
-                   (8, 64), (16, 64), (32, 64), (64, 64), (128, 64), (256, 64)]
+                   (8, 64), (16, 64), (32, 64), (64, 64), (128, 64), (256, 64),
+                   ]
 
         t_so_far = 0
         mm = 0
+        ep = 0
         last_isr = 0
         count_repeat = 0
         first = True
         while t_so_far < max_time_steps:
-            if last_isr != 1 and count_repeat <= -11 and not first:
+            ep += 1
+            if last_isr <= 0.95 and count_repeat <= -100 and not first:
                 # >AB02;O5< :0@BC
                 repeat = True
                 count_repeat += 1
@@ -138,7 +161,7 @@ class PPO:
                 self.size_map = map[1]
                 self.num_agents = n_agents
                 tt = random.choice([[1], [2], [3], [2, 3], [1, 3],])
-                if random.random() < 0.5:
+                if random.random() < 0.75:
                     type_grid = 'old'
                     grid_config = GridConfig(num_agents=n_agents,
                                              size=map[1],
@@ -147,13 +170,12 @@ class PPO:
                                              max_episode_steps=256,
                                              obs_radius=5,
                                              )
-                    env = gym.make("Pogema-v0", grid_config=grid_config)
                 else:
                     type_grid = 'new'
                     grid = own_grid(tt, map[1])
                     grid_config = GridConfig(map=grid, num_agents=n_agents, size=map[1],
-                                             max_episode_steps=256, obs_radius=5)
-                    env = gym.make('Pogema-v0', grid_config=grid_config)
+                                             max_episode_steps=256, obs_radius=5, seed=None)
+                env = gym.make('Pogema-v0', grid_config=grid_config)
 
                 self.env = env
             self.agents = []
@@ -162,7 +184,7 @@ class PPO:
             self.solver = astarmodel()
 
             batch_obs, batch_acts, batch_log_probs, batch_rtgs, \
-            batch_lens, batch_acts_old, batch_exps, win = self.rollout()
+            batch_lens, batch_acts_old, batch_exps, win = self.rollout(ep)
             t_so_far += np.sum(batch_lens)
 
             self.init_hidden(1)
@@ -201,12 +223,16 @@ class PPO:
                     l3 += critic_loss.item()
             mm += 1
             last_isr = win / n_agents
+            if ep % 499 == 0:
+                torch.save(self.actor.state_dict(), f'model/ppo_actor_{ep}.pth')
+                torch.save(self.critic.state_dict(), f'model/ppo_critic_{ep}.pth')
+
             if mm % 1 == 0:
                 torch.save(self.actor.state_dict(), 'ppo_actor.pth')
                 torch.save(self.critic.state_dict(), 'ppo_critic.pth')
                 print('{}. isr {:.03f} / ({:d}, {:d}) size {} type {} {}\t\t {} loss actor: {:.03f}, entropy: {:.03f}, loss critic: {:.03f},'
                       ''.format(mm, win / n_agents, int(win), int(n_agents), map[1], type_grid, '' if type_grid=='old' else tt,
-                                                                    '   repeat' if repeat else '',
+                                                                    '   repeat '+str(count_repeat) if repeat else '',
                                                                        l1 / self.n_updates_per_iteration,
                                                                        l2 / self.n_updates_per_iteration,
                                                                        l3 / self.n_updates_per_iteration,
@@ -233,7 +259,7 @@ class PPO:
             log_probs.append(log_prob)
         return np.array(actions), np.array(log_probs)
 
-    def rollout(self):
+    def rollout(self, n_ep):
         batch_obs = []
         batch_acts = []
         batch_acts_old = []
@@ -282,7 +308,7 @@ class PPO:
                         exp[y] = 2
 
             batch_exp.append(exp)
-            ep_rews.append(self.get_reward(rew, finish, action, action_classic ))
+            ep_rews.append(self.get_reward(rew, finish, action, action_classic, n_ep))
             batch_acts.append(action)
             batch_log_probs.append(log_prob)
             ep_t += 1
@@ -310,36 +336,33 @@ class PPO:
         batch_exps = torch.tensor(batch_exp, dtype=torch.long).to(device)
         return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_acts_old, batch_exps, win
 
-    def get_reward(self, step_reward, finish, action, action_classic):
+    def get_reward(self, step_reward, finish, action, action_classic, n_ep):
         dist_agents = self.env.get_agents_xy_relative()
         rew = []
         have_good_f = False
         step = 0
         for da, sr, f, agent, act, act_class in zip(dist_agents, step_reward, finish, self.agents, action,
                                                     action_classic):
-            # for da, sr, f, agent, act, act_class in zip(dist_agents, step_reward, finish, self.agents, action,
-            #                                             action_classic):
-            #     h_new = abs(da[0] - agent.targets_xy[0]) + abs(
-            #         da[1] - agent.targets_xy[1])  # Manhattan distance as a heuristic function
-            #     h_old = abs(agent.agents_xy[-1][0] - agent.targets_xy[0]) + \
-            #             abs(agent.agents_xy[-1][1] - agent.targets_xy[1])
-            #     koeff = 2 * step / 255 + 1
+            h_new = abs(da[0] - agent.targets_xy[0]) + abs(da[1] - agent.targets_xy[1])
+            h_old = abs(agent.agents_xy[-1][0] - agent.targets_xy[0]) + \
+                    abs(agent.agents_xy[-1][1] - agent.targets_xy[1])
+            koeff = 1 #max(0.01, 0.5 - n_ep/1000)
             if sr == 1.0:
                 rew.append(1)
                 # have_good_f = True
-            # else:
-            #     rew.append(0)
+            #else:
+            #    rew.append(0)
             elif f == True:
                 rew.append(0)
             elif da in agent.agents_xy:
-                rew.append(-0.02)
+                rew.append(-0.02 * koeff)
                 # rew.append(-0.02 * sum([1 for x in agent.agents_xy if x == da]))
             elif act == act_class:
-                rew.append(0.02)
-            # elif (h_new < h_old):  # and (not (da in agent.agents_xy)):
-            #     rew.append(0.02)
+                rew.append(0.02 * koeff)
+            elif (h_new < h_old):  # and (not (da in agent.agents_xy)):
+                rew.append(0.01 * koeff)
             else:
-                rew.append(-0.01)
+                rew.append(-0.02 * koeff)
 
             step += 1
         # if not have_good_f:
@@ -418,8 +441,8 @@ class PPO:
 
     def init_hidden(self, episode_num):
         for i in range(self.num_agents):
-            self.agents[i].actor_rnn_hidden_dim = torch.zeros((episode_num, 64)).to(device)
-            self.agents[i].critic_rnn_hidden_dim = torch.zeros((episode_num, 64)).to(device)
+            self.agents[i].actor_rnn_hidden_dim = torch.zeros((episode_num, 512)).to(device)
+            self.agents[i].critic_rnn_hidden_dim = torch.zeros((episode_num, 512)).to(device)
             self.agents[i].targets_xy = (0, 0)
             self.agents[i].agents_xy = []
 
@@ -430,7 +453,7 @@ class PPO:
 
 
 if __name__ == '__main__':
-    # model = PPO(path_to_actor='ppo_actor.pth', )
+    # model = PPO()
     model = PPO(path_to_actor='ppo_actor.pth', path_to_critic='ppo_critic.pth')
     # model = PPO(env, n_agents, path_to_actor='model_50.pth')
     model.learn(10_000_000)
