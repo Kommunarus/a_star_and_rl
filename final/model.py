@@ -16,17 +16,17 @@ class Model:
 
     def __init__(self, p=0.5, alg=1, device=torch.device('cpu'), ):
         if alg == 1:
-            self.our_agen = PPO(path_to_actor='ppo_actor_7000a.pth')
+            self.our_agen = PPO_small(path_to_actor='ppo_actor_21.pth')
             self.our_agen.actor.eval()
             self.our_agen.actor.to(device)
             self.our_agen.init_hidden(1)
         if alg == 2:
-            self.our_agen = PPO(path_to_actor='ppo_actor_998.pth')
+            self.our_agen = PPO_small(path_to_actor='ppo_actor_IV.pth')
             self.our_agen.actor.eval()
             self.our_agen.actor.to(device)
             self.our_agen.init_hidden(1)
         if alg == 3:
-            self.our_agen = PPO_small(path_to_actor='ppo_actor_IV.pth')
+            self.our_agen = PPO_small(path_to_actor='ppo_actor_23.pth')
             self.our_agen.actor.eval()
             self.our_agen.actor.to(device)
             self.our_agen.init_hidden(1)
@@ -75,7 +75,7 @@ if __name__ == '__main__':
         # size = 16
         # tt = random.choice([[1], [2], [3], [1, 3], [2, 3]])
         print('')
-        for alg in [1, 3]:
+        for alg in [1, 2]:
 
             classs = Model(0.5, alg=alg)
 
