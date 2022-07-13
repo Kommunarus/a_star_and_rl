@@ -16,30 +16,31 @@ class PPOActor(nn.Module):
         super(PPOActor, self).__init__()
         self.rnn_hidden_dim = rnn_hidden_dim
         self.feachextractor = nn.Sequential(
-            nn.Conv2d(input_shape, 8, 3, 2, 0),
-            nn.BatchNorm2d(8),
-            nn.ReLU(),
-            nn.Conv2d(8, 16, 3, 2, 0),
-            nn.BatchNorm2d(16),
-            nn.ReLU(),
-            nn.Conv2d(16, 32, 3, 2, 0),
+            nn.Conv2d(input_shape, 32, 3, 1, 1),
             nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(32, 64, 3, 2, 0),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(32, 32, 3, 2, 1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(64, 64, 3, 2, 0),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(32, 32, 3, 2, 1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(64, 64, 3, 2, 0),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(32, 32, 3, 2, 1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 32, 3, 2, 1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 32, 3, 2, 1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 32, 3, 2, 1),
             nn.Flatten(1)
         )
 
-        self.fc1 = nn.Linear(2 * 2 * 64 + dop_input_shape, self.rnn_hidden_dim)
+        self.fc1 = nn.Linear(3*3*32 + dop_input_shape, self.rnn_hidden_dim)
         self.rnn = nn.GRUCell(self.rnn_hidden_dim, self.rnn_hidden_dim)
-        self.fc2 = nn.Linear(self.rnn_hidden_dim, self.rnn_hidden_dim * 2)
-        self.fc3 = nn.Linear(self.rnn_hidden_dim * 2, n_actions)
+        self.fc2 = nn.Linear(self.rnn_hidden_dim, n_actions)
 
     def forward(self, s, dopobs, hidden_state):
         aa_flat = self.feachextractor(s)
@@ -48,7 +49,6 @@ class PPOActor(nn.Module):
         h_in = hidden_state.reshape(-1, self.rnn_hidden_dim)
         h = self.rnn(x, h_in)
         q = self.fc2(h)
-        q = self.fc3(F.relu(q))
         return q, torch.unsqueeze(h.detach(), 1)
 
 
@@ -57,30 +57,31 @@ class PPOCritic(nn.Module):
         super(PPOCritic, self).__init__()
         self.rnn_hidden_dim = rnn_hidden_dim
         self.feachextractor = nn.Sequential(
-            nn.Conv2d(input_shape, 8, 3, 2, 0),
-            nn.BatchNorm2d(8),
-            nn.ReLU(),
-            nn.Conv2d(8, 16, 3, 2, 0),
-            nn.BatchNorm2d(16),
-            nn.ReLU(),
-            nn.Conv2d(16, 32, 3, 2, 0),
+            nn.Conv2d(input_shape, 32, 3, 1, 1),
             nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(32, 64, 3, 2, 0),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(32, 32, 3, 2, 1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(64, 64, 3, 2, 0),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(32, 32, 3, 2, 1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(64, 64, 3, 2, 0),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(32, 32, 3, 2, 1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 32, 3, 2, 1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 32, 3, 2, 1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 32, 3, 2, 1),
             nn.Flatten(1)
         )
 
-        self.fc1 = nn.Linear(2 * 2 * 64, self.rnn_hidden_dim)
+        self.fc1 = nn.Linear(3*3*32, self.rnn_hidden_dim)
         self.rnn = nn.GRUCell(self.rnn_hidden_dim, self.rnn_hidden_dim)
-        self.fc2 = nn.Linear(self.rnn_hidden_dim, self.rnn_hidden_dim * 2)
-        self.fc3 = nn.Linear(self.rnn_hidden_dim * 2, 1)
+        self.fc2 = nn.Linear(self.rnn_hidden_dim, 1)
 
     def forward(self, s, hidden_state):
         aa_flat = self.feachextractor(s)
@@ -89,21 +90,17 @@ class PPOCritic(nn.Module):
         h_in = hidden_state.reshape(-1, self.rnn_hidden_dim)
         h = self.rnn(x, h_in)
         q = self.fc2(h)
-        q = self.fc3(F.relu(q))
         return q, torch.unsqueeze(h.detach(), 1)
 
 
 class Agent:
     def __init__(self):
-
         self.critic_rnn_hidden_dim = torch.zeros((1, 64), dtype=torch.float).to(device)
         self.actor_rnn_hidden_dim = torch.zeros((1, 64), dtype=torch.float).to(device)
         self.targets_xy = (0, 0)
         self.agents_xy = []
-        self.lenmap = 100
-        self.fullmap = np.zeros((2*self.lenmap + 1, 2*self.lenmap + 1))
-
-
+        self.lenmap = 70
+        self.fullmap = np.zeros((2 * self.lenmap + 1, 2 * self.lenmap + 1), dtype=np.uint8)
 
 
 class PPO:
@@ -113,7 +110,7 @@ class PPO:
         self.n_updates_per_iteration = 5
         self.gamma = 0.99
         self.gae_lambda = 0.95
-        self.beta = 0.001
+        self.beta = 0.005
         self.clip = 0.15
         self.lr_actor = 1e-5
         self.lr_critic = 1e-4
@@ -140,8 +137,9 @@ class PPO:
     def learn(self, max_time_steps):
         # all_map = [(8, 32), (16, 32), (32, 32),(64, 32),(16, 64), (32, 64), (64, 64), (128, 64)]
         all_map = [(8, 16), (16, 16), (32, 16),
-                   (8, 32), (16, 32), (32, 32), (64, 32), (128, 32),
-                   (8, 64), (16, 64), (32, 64), (64, 64), (128, 64), (256, 64)]
+                   (8, 32), (16, 32), (32, 32), #(64, 32), (128, 32),
+                   (8, 64), (16, 64), (32, 64), #(64, 64), (128, 64),
+                   ]
 
         t_so_far = 0
         mm = 0
@@ -182,22 +180,22 @@ class PPO:
 
             self.actor.train()
 
-            batch_obs, batch_acts, batch_log_probs, batch_rtgs, \
+            batch_obs_np, batch_acts, batch_log_probs, batch_rtgs, \
             batch_lens, batch_acts_old, batch_exps, win = self.rollout()
             t_so_far += np.sum(batch_lens)
 
             self.init_hidden(1)
             l1, l2, l3 = 0, 0, 0
             for i, agent in enumerate(self.agents):
-
-                V, _, _ = self.evaluate(batch_obs[:, i, :], batch_acts[:, i], batch_acts_old[:, i], i)
+                batch_obs = torch.tensor(batch_obs_np[:, i, :], dtype=torch.float).to(device)
+                V, _, _ = self.evaluate(batch_obs[:, :], batch_acts[:, i], batch_acts_old[:, i], i)
                 traj_adv_v, traj_ref_v = self.calc_adv_ref(batch_rtgs[:, i], V, batch_exps[:, i])
                 len_traj = len(traj_adv_v)
                 # traj_adv_v = traj_adv_v  / torch.std(traj_adv_v)
 
                 for _ in range(self.n_updates_per_iteration):
                     self.init_hidden(1)
-                    V, curr_log_probs, entropy = self.evaluate(batch_obs[:len_traj, i, :],
+                    V, curr_log_probs, entropy = self.evaluate(batch_obs[:len_traj, :],
                                                                batch_acts[:len_traj, i],
                                                                batch_acts_old[:len_traj, i], i)
                     ratios = torch.exp(curr_log_probs - batch_log_probs[:len_traj, i])
@@ -265,6 +263,7 @@ class PPO:
 
         t = 0
         obs = self.env.reset()
+        # print(len(obs))
         self.init_hidden(1)
         n_agents = len(obs)
         # Rewards this episode
@@ -325,7 +324,8 @@ class PPO:
 
         # Reshape data as tensors in the shape specified before returning
 
-        batch_obs = torch.tensor(np.array(batch_obs), dtype=torch.float).to(device)
+        # batch_obs = torch.tensor(np.array(batch_obs), dtype=torch.float).to(device)
+        batch_obs = np.array(batch_obs, dtype=np.uint8)
         batch_acts = torch.tensor(np.array(batch_acts), dtype=torch.long).to(device)
         batch_acts_old = torch.tensor(np.array(batch_acts_old), dtype=torch.long).to(device)
         batch_log_probs = torch.tensor(np.array(batch_log_probs), dtype=torch.float).to(device)
@@ -340,20 +340,19 @@ class PPO:
             current_xy = self.agents[i].agents_xy[-1]
             d0 = self.agents[i].lenmap + current_xy[0] - 5
             d1 = self.agents[i].lenmap + current_xy[1] - 5
-            current_map[d0: d0+11, d1: d1 + 11] = o[0]
+            current_map[d0: d0 + 11, d1: d1 + 11] = o[0]
 
-            map_agent = np.zeros((2*self.agents[i].lenmap + 1, 2*self.agents[i].lenmap + 1))
-            map_agent[d0: d0+11, d1: d1 + 11] = o[1]
+            map_agent = np.zeros((2 * self.agents[i].lenmap + 1, 2 * self.agents[i].lenmap + 1), dtype=np.uint8)
+            map_agent[d0: d0 + 11, d1: d1 + 11] = o[1]
 
-            map_target = np.zeros((2*self.agents[i].lenmap + 1, 2*self.agents[i].lenmap + 1))
-            map_target[d0: d0+11, d1: d1 + 11] = o[2]
+            map_target = np.zeros((2 * self.agents[i].lenmap + 1, 2 * self.agents[i].lenmap + 1), dtype=np.uint8)
+            # map_target[d0: d0 + 11, d1: d1 + 11] = o[2]
             map_target[self.agents[i].lenmap + self.agents[i].targets_xy[0],
                        self.agents[i].lenmap + self.agents[i].targets_xy[1]] = 1
 
             newobs.append(np.stack([current_map, map_agent, map_target]))
 
         return newobs
-
 
     def get_reward(self, step_reward, finish, action, action_classic):
         dist_agents = self.env.get_agents_xy_relative()
@@ -378,7 +377,7 @@ class PPO:
                 rew.append(0)
             # elif da in agent.agents_xy:
             #     rew.append(-self.rew_list[1])
-                # rew.append(-0.02 * sum([1 for x in agent.agents_xy if x == da]))
+            # rew.append(-0.02 * sum([1 for x in agent.agents_xy if x == da]))
             elif act == act_class:
                 rew.append(self.rew_list[1])
             # elif (h_new < h_old):  # and (not (da in agent.agents_xy)):
@@ -474,14 +473,12 @@ class PPO:
             self.agents[i].agents_xy.append(agents_xy[i])
 
 
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--n-game', type=int, default=1_000)
-    parser.add_argument('--id', default='1')
-    parser.add_argument('--cuda', type=int, default=0)
-    parser.add_argument('--reward', default='1,0.02,0.02')  # total, -xy, astar, new<old, -other
+    parser.add_argument('--n-game', type=int, default=100_000)
+    parser.add_argument('--id', default='second')
+    parser.add_argument('--cuda', type=int, default=1)
+    parser.add_argument('--reward', default='1,0.01,0.01')  # total, -xy, astar, new<old, -other
 
     arg = parser.parse_args()
     device = torch.device(f'cuda:{arg.cuda}')
@@ -489,7 +486,8 @@ if __name__ == '__main__':
 
     rew = [float(x) for x in arg.reward.split(',')]
 
-    model = PPO(rew_list=rew, id_save=arg.id)
+    model = PPO(path_to_actor='ppo_actor_first.pth', path_to_critic='ppo_critic_first.pth',
+                rew_list=rew, id_save=arg.id)
     # model = PPO(env, n_agents, path_to_actor='model_50.pth')
     model.learn(arg.n_game)
 
