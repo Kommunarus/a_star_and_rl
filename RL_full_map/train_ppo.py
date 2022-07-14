@@ -16,29 +16,32 @@ class PPOActor(nn.Module):
         super(PPOActor, self).__init__()
         self.rnn_hidden_dim = rnn_hidden_dim
         self.feachextractor = nn.Sequential(
-            nn.Conv2d(input_shape, 32, 3, 1, 1),
+            nn.Conv2d(input_shape, 16, 3, 1, 1),
+            nn.BatchNorm2d(16),
+            nn.ELU(),
+            nn.Conv2d(16, 32, 3, 1, 1),
             nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, 3, 2, 1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, 3, 2, 1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, 3, 2, 1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, 3, 2, 1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, 3, 2, 1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, 3, 2, 1),
+            nn.ELU(),
+            nn.Conv2d(32, 64, 3, 1, 1),
+            nn.BatchNorm2d(64),
+            nn.ELU(),
+            nn.Conv2d(64, 128, 3, 2, 1),
+            nn.BatchNorm2d(128),
+            nn.ELU(),
+            nn.Conv2d(128, 128, 3, 2, 1),
+            nn.BatchNorm2d(128),
+            nn.ELU(),
+            nn.Conv2d(128, 128, 3, 2, 1),
+            nn.BatchNorm2d(128),
+            nn.ELU(),
+            nn.Conv2d(128, 128, 3, 2, 1),
+            nn.BatchNorm2d(128),
+            nn.ELU(),
+            nn.Conv2d(128, 128, 3, 2, 1),
             nn.Flatten(1)
         )
 
-        self.fc1 = nn.Linear(3*3*32 + dop_input_shape, self.rnn_hidden_dim)
+        self.fc1 = nn.Linear(2*2*128 + dop_input_shape, self.rnn_hidden_dim)
         self.rnn = nn.GRUCell(self.rnn_hidden_dim, self.rnn_hidden_dim)
         self.fc2 = nn.Linear(self.rnn_hidden_dim, n_actions)
 
@@ -57,29 +60,32 @@ class PPOCritic(nn.Module):
         super(PPOCritic, self).__init__()
         self.rnn_hidden_dim = rnn_hidden_dim
         self.feachextractor = nn.Sequential(
-            nn.Conv2d(input_shape, 32, 3, 1, 1),
+            nn.Conv2d(input_shape, 16, 3, 1, 1),
+            nn.BatchNorm2d(16),
+            nn.ELU(),
+            nn.Conv2d(16, 32, 3, 1, 1),
             nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, 3, 2, 1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, 3, 2, 1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, 3, 2, 1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, 3, 2, 1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, 3, 2, 1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, 3, 2, 1),
+            nn.ELU(),
+            nn.Conv2d(32, 64, 3, 1, 1),
+            nn.BatchNorm2d(64),
+            nn.ELU(),
+            nn.Conv2d(64, 128, 3, 2, 1),
+            nn.BatchNorm2d(128),
+            nn.ELU(),
+            nn.Conv2d(128, 128, 3, 2, 1),
+            nn.BatchNorm2d(128),
+            nn.ELU(),
+            nn.Conv2d(128, 128, 3, 2, 1),
+            nn.BatchNorm2d(128),
+            nn.ELU(),
+            nn.Conv2d(128, 128, 3, 2, 1),
+            nn.BatchNorm2d(128),
+            nn.ELU(),
+            nn.Conv2d(128, 128, 3, 2, 1),
             nn.Flatten(1)
         )
 
-        self.fc1 = nn.Linear(3*3*32, self.rnn_hidden_dim)
+        self.fc1 = nn.Linear(2*2*128, self.rnn_hidden_dim)
         self.rnn = nn.GRUCell(self.rnn_hidden_dim, self.rnn_hidden_dim)
         self.fc2 = nn.Linear(self.rnn_hidden_dim, 1)
 
@@ -99,7 +105,7 @@ class Agent:
         self.actor_rnn_hidden_dim = torch.zeros((1, 64), dtype=torch.float).to(device)
         self.targets_xy = (0, 0)
         self.agents_xy = []
-        self.lenmap = 70
+        self.lenmap = 64
         self.fullmap = np.zeros((2 * self.lenmap + 1, 2 * self.lenmap + 1), dtype=np.uint8)
 
 
@@ -136,10 +142,12 @@ class PPO:
 
     def learn(self, max_time_steps):
         # all_map = [(8, 32), (16, 32), (32, 32),(64, 32),(16, 64), (32, 64), (64, 64), (128, 64)]
-        all_map = [(8, 16), (16, 16), (32, 16),
-                   (8, 32), (16, 32), (32, 32), #(64, 32), (128, 32),
-                   (8, 64), (16, 64), (32, 64), #(64, 64), (128, 64),
-                   ]
+        # all_map = [(8, 16), (16, 16), (32, 16),
+        #            (8, 24), (16, 24), (32, 24),
+        #            (8, 32), (16, 32), (32, 32),
+        #            (8, 48), (16, 48), (32, 48),
+        #            (8, 64), (16, 64), (32, 64),
+        #            ]
 
         t_so_far = 0
         mm = 0
@@ -158,7 +166,9 @@ class PPO:
                 count_repeat = 0
                 # print('-'.join(['']*100))
 
-                map = random.choice(all_map)
+                map = (2, random.randint(8, 20))
+                # map = (random.randint(8, 32), random.randint(16, 68))
+                # map = random.choice(all_map)
                 # map = random.choices(all_map, weights=[0.2, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.2], k=1)[0]
                 n_agents = map[0]
                 self.size_map = map[1]
@@ -342,6 +352,12 @@ class PPO:
             d1 = self.agents[i].lenmap + current_xy[1] - 5
             current_map[d0: d0 + 11, d1: d1 + 11] = o[0]
 
+            nonzero = np.nonzero(current_map)
+            min_d1 = np.min(nonzero[0])
+            min_d2 = np.min(nonzero[1])
+            # max_d1 = np.max(nonzero[0])
+            # max_d2 = np.max(nonzero[1])
+
             map_agent = np.zeros((2 * self.agents[i].lenmap + 1, 2 * self.agents[i].lenmap + 1), dtype=np.uint8)
             map_agent[d0: d0 + 11, d1: d1 + 11] = o[1]
 
@@ -350,7 +366,23 @@ class PPO:
             map_target[self.agents[i].lenmap + self.agents[i].targets_xy[0],
                        self.agents[i].lenmap + self.agents[i].targets_xy[1]] = 1
 
-            newobs.append(np.stack([current_map, map_agent, map_target]))
+            min_d1 = min(min_d1, self.agents[i].lenmap + self.agents[i].targets_xy[0])
+            min_d2 = min(min_d2, self.agents[i].lenmap + self.agents[i].targets_xy[1])
+            # max_d1 = np.max(nonzero[0])
+
+
+            newobs.append(np.stack([current_map[
+                                        min_d1: min_d1+self.agents[i].lenmap,
+                                        min_d2: min_d2+self.agents[i].lenmap
+                                    ],
+                                    map_agent[
+                                        min_d1: min_d1+self.agents[i].lenmap,
+                                        min_d2: min_d2+self.agents[i].lenmap
+                                    ],
+                                    map_target[
+                                        min_d1: min_d1+self.agents[i].lenmap,
+                                        min_d2: min_d2+self.agents[i].lenmap
+                                    ]]))
 
         return newobs
 
@@ -476,7 +508,7 @@ class PPO:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--n-game', type=int, default=100_000)
-    parser.add_argument('--id', default='second')
+    parser.add_argument('--id', default='first')
     parser.add_argument('--cuda', type=int, default=1)
     parser.add_argument('--reward', default='1,0.01,0.01')  # total, -xy, astar, new<old, -other
 
@@ -486,8 +518,9 @@ if __name__ == '__main__':
 
     rew = [float(x) for x in arg.reward.split(',')]
 
-    model = PPO(path_to_actor='ppo_actor_first.pth', path_to_critic='ppo_critic_first.pth',
-                rew_list=rew, id_save=arg.id)
+    model = PPO(rew_list=rew, id_save=arg.id)
+    # model = PPO(path_to_actor='ppo_actor_second.pth', path_to_critic='ppo_critic_second.pth',
+    #             rew_list=rew, id_save=arg.id)
     # model = PPO(env, n_agents, path_to_actor='model_50.pth')
     model.learn(arg.n_game)
 
