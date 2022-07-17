@@ -9,44 +9,39 @@ from pogema import GridConfig
 import random
 from model_astar import Model as astarmodel
 import argparse
+import copy
 
+max_size = 32
+flayer = [nn.Conv2d(3, 16, 3, 1, 1), nn.ReLU(),
+          nn.Conv2d(16, 32, 3, 1, 1), nn.ReLU(),
+          nn.Conv2d(32, 64, 3, 1, 1), nn.ReLU(),
+          nn.Conv2d(64, 128, 3, 1, 1), nn.ReLU(),
+          ]
+slayer = []
+for i in range(5):
+    slayer = slayer + [nn.Conv2d(128, 128, 3, 2, 1), nn.ReLU(), ]
+
+
+ml = flayer + slayer + [nn.Flatten(1), ]
+
+fa_actor = nn.ModuleList(ml)
+fa_critic = copy.deepcopy(fa_actor)
 
 class PPOActor(nn.Module):
     def __init__(self, input_shape, dop_input_shape, rnn_hidden_dim, n_actions):
         super(PPOActor, self).__init__()
         self.rnn_hidden_dim = rnn_hidden_dim
-        self.feachextractor = nn.Sequential(
-            nn.Conv2d(input_shape, 16, 3, 1, 1),
-            nn.BatchNorm2d(16),
-            nn.ELU(),
-            nn.Conv2d(16, 32, 3, 1, 1),
-            nn.BatchNorm2d(32),
-            nn.ELU(),
-            nn.Conv2d(32, 64, 3, 1, 1),
-            nn.BatchNorm2d(64),
-            nn.ELU(),
-            nn.Conv2d(64, 128, 3, 2, 1),
-            nn.BatchNorm2d(128),
-            nn.ELU(),
-            nn.Conv2d(128, 128, 3, 2, 1),
-            nn.BatchNorm2d(128),
-            nn.ELU(),
-            nn.Conv2d(128, 128, 3, 2, 1),
-            nn.BatchNorm2d(128),
-            nn.ELU(),
-            nn.Conv2d(128, 128, 3, 2, 1),
-            nn.BatchNorm2d(128),
-            nn.ELU(),
-            nn.Conv2d(128, 128, 3, 2, 1),
-            nn.Flatten(1)
-        )
+        self.feachextractor = fa_actor
 
-        self.fc1 = nn.Linear(2*2*128 + dop_input_shape, self.rnn_hidden_dim)
+        self.fc1 = nn.Linear(2 * 2 * 128 + dop_input_shape, self.rnn_hidden_dim)
         self.rnn = nn.GRUCell(self.rnn_hidden_dim, self.rnn_hidden_dim)
         self.fc2 = nn.Linear(self.rnn_hidden_dim, n_actions)
 
     def forward(self, s, dopobs, hidden_state):
-        aa_flat = self.feachextractor(s)
+        aa_flat = self.feachextractor[0](s)
+        for l in self.feachextractor[1:]:
+            aa_flat = l(aa_flat)
+        # aa_flat = self.feachextractor(s)
         input = torch.hstack([aa_flat, dopobs])
         x = F.relu(self.fc1(input))
         h_in = hidden_state.reshape(-1, self.rnn_hidden_dim)
@@ -59,39 +54,16 @@ class PPOCritic(nn.Module):
     def __init__(self, input_shape, rnn_hidden_dim):
         super(PPOCritic, self).__init__()
         self.rnn_hidden_dim = rnn_hidden_dim
-        self.feachextractor = nn.Sequential(
-            nn.Conv2d(input_shape, 16, 3, 1, 1),
-            nn.BatchNorm2d(16),
-            nn.ELU(),
-            nn.Conv2d(16, 32, 3, 1, 1),
-            nn.BatchNorm2d(32),
-            nn.ELU(),
-            nn.Conv2d(32, 64, 3, 1, 1),
-            nn.BatchNorm2d(64),
-            nn.ELU(),
-            nn.Conv2d(64, 128, 3, 2, 1),
-            nn.BatchNorm2d(128),
-            nn.ELU(),
-            nn.Conv2d(128, 128, 3, 2, 1),
-            nn.BatchNorm2d(128),
-            nn.ELU(),
-            nn.Conv2d(128, 128, 3, 2, 1),
-            nn.BatchNorm2d(128),
-            nn.ELU(),
-            nn.Conv2d(128, 128, 3, 2, 1),
-            nn.BatchNorm2d(128),
-            nn.ELU(),
-            nn.Conv2d(128, 128, 3, 2, 1),
-            nn.Flatten(1)
-        )
+        self.feachextractor = fa_critic
 
-        self.fc1 = nn.Linear(2*2*128, self.rnn_hidden_dim)
+        self.fc1 = nn.Linear(2 * 2 * 128, self.rnn_hidden_dim)
         self.rnn = nn.GRUCell(self.rnn_hidden_dim, self.rnn_hidden_dim)
         self.fc2 = nn.Linear(self.rnn_hidden_dim, 1)
 
     def forward(self, s, hidden_state):
-        aa_flat = self.feachextractor(s)
-        # input = torch.hstack([aa_flat, dopobs])
+        aa_flat = self.feachextractor[0](s)
+        for l in self.feachextractor[1:]:
+            aa_flat = l(aa_flat)
         x = F.relu(self.fc1(aa_flat))
         h_in = hidden_state.reshape(-1, self.rnn_hidden_dim)
         h = self.rnn(x, h_in)
@@ -105,7 +77,7 @@ class Agent:
         self.actor_rnn_hidden_dim = torch.zeros((1, 64), dtype=torch.float).to(device)
         self.targets_xy = (0, 0)
         self.agents_xy = []
-        self.lenmap = 64
+        self.lenmap = max_size + 2*5
         self.fullmap = np.zeros((2 * self.lenmap + 1, 2 * self.lenmap + 1), dtype=np.uint8)
 
 
@@ -166,7 +138,7 @@ class PPO:
                 count_repeat = 0
                 # print('-'.join(['']*100))
 
-                map = (2, random.randint(8, 20))
+                map = (64, max_size)
                 # map = (random.randint(8, 32), random.randint(16, 68))
                 # map = random.choice(all_map)
                 # map = random.choices(all_map, weights=[0.2, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.2], k=1)[0]
@@ -177,7 +149,7 @@ class PPO:
                                          size=map[1],
                                          density=0.3,
                                          seed=None,
-                                         max_episode_steps=256,
+                                         max_episode_steps=156,
                                          obs_radius=5,
                                          )
                 env = gym.make("Pogema-v0", grid_config=grid_config)
@@ -352,12 +324,6 @@ class PPO:
             d1 = self.agents[i].lenmap + current_xy[1] - 5
             current_map[d0: d0 + 11, d1: d1 + 11] = o[0]
 
-            nonzero = np.nonzero(current_map)
-            min_d1 = np.min(nonzero[0])
-            min_d2 = np.min(nonzero[1])
-            # max_d1 = np.max(nonzero[0])
-            # max_d2 = np.max(nonzero[1])
-
             map_agent = np.zeros((2 * self.agents[i].lenmap + 1, 2 * self.agents[i].lenmap + 1), dtype=np.uint8)
             map_agent[d0: d0 + 11, d1: d1 + 11] = o[1]
 
@@ -366,23 +332,45 @@ class PPO:
             map_target[self.agents[i].lenmap + self.agents[i].targets_xy[0],
                        self.agents[i].lenmap + self.agents[i].targets_xy[1]] = 1
 
-            min_d1 = min(min_d1, self.agents[i].lenmap + self.agents[i].targets_xy[0])
-            min_d2 = min(min_d2, self.agents[i].lenmap + self.agents[i].targets_xy[1])
+            if self.agents[i].targets_xy[0] >= 0 and self.agents[i].targets_xy[1] >= 0:
+                angel = 2
+            elif self.agents[i].targets_xy[0] >= 0 and self.agents[i].targets_xy[1] <= 0:
+                angel = 3
+            elif self.agents[i].targets_xy[0] <= 0 and self.agents[i].targets_xy[1] <= 0:
+                angel = 0
+            else:
+                angel = 1
+
+            a1 = np.rot90(current_map, angel)
+            a2 = np.rot90(map_agent, angel)
+            a3 = np.rot90(map_target, angel)
+
+            nonzero = np.nonzero(current_map)
+            min_d1 = np.min(nonzero[0])
+            min_d2 = np.min(nonzero[1])
+
+            nonzero2 = np.nonzero(map_target)
+            min_d3 = np.min(nonzero2[0])
+            min_d4 = np.min(nonzero2[1])
             # max_d1 = np.max(nonzero[0])
 
+            min_d1 = min(min_d1, min_d3)
+            min_d2 = min(min_d2, min_d2)
 
-            newobs.append(np.stack([current_map[
-                                        min_d1: min_d1+self.agents[i].lenmap,
-                                        min_d2: min_d2+self.agents[i].lenmap
-                                    ],
-                                    map_agent[
-                                        min_d1: min_d1+self.agents[i].lenmap,
-                                        min_d2: min_d2+self.agents[i].lenmap
-                                    ],
-                                    map_target[
-                                        min_d1: min_d1+self.agents[i].lenmap,
-                                        min_d2: min_d2+self.agents[i].lenmap
-                                    ]]))
+            a1 = current_map[
+                 min_d1: min_d1 + self.agents[i].lenmap,
+                 min_d2: min_d2 + self.agents[i].lenmap
+                 ]
+            a2 = map_agent[
+                 min_d1: min_d1 + self.agents[i].lenmap,
+                 min_d2: min_d2 + self.agents[i].lenmap
+                 ]
+            a3 = map_target[
+                 min_d1: min_d1 + self.agents[i].lenmap,
+                 min_d2: min_d2 + self.agents[i].lenmap
+                 ]
+
+            newobs.append(np.stack([a1, a2, a3]))
 
         return newobs
 
