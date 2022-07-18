@@ -6,9 +6,9 @@ import torch.nn.functional as F
 class PPOActor(nn.Module):
     def __init__(self, hidden_dim, n_actions):
         super(PPOActor, self).__init__()
-        flayer = [nn.Conv2d(4, 192, 3, 1, 1), nn.ReLU(), ]
+        flayer = [nn.Conv2d(17, 192, 3, 1, 1), nn.ReLU(), ]
         slayer = []
-        for i in range(10):
+        for i in range(6):
             slayer = slayer + [nn.Conv2d(192, 192, 3, 1, 1), nn.ReLU(), ]
 
         ml = flayer + slayer + [nn.Conv2d(192, 1, 1, 1, 0), nn.ReLU(), nn.Flatten(1), ]
@@ -21,7 +21,7 @@ class PPOActor(nn.Module):
             if isinstance(m, nn.Conv2d):
                 torch.nn.init.xavier_uniform_(m.weight)
 
-        self.fc1 = nn.Linear(74 * 74 * 1, self.hidden_dim)
+        self.fc1 = nn.Linear(31 * 31 * 1, self.hidden_dim)
         self.fc2 = nn.Linear(self.hidden_dim, n_actions)
 
         torch.nn.init.xavier_uniform_(self.fc1.weight)
@@ -37,9 +37,9 @@ class PPOActor(nn.Module):
         return x
 
 if __name__ == '__main__':
-    input = torch.randn(32, 4, 74, 74)
+    input = torch.randn(32, 17, 31, 31)
     input_dop = torch.randn(32, 5)
     policy_hidden = torch.zeros((32, 1, 64))
-    model = PPOActor(4, 5, 64, 5)
+    model = PPOActor(64, 5)
     output = model(input, input_dop, policy_hidden)
     print(output[0].size())

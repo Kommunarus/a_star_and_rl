@@ -18,6 +18,7 @@ grid_config = GridConfig(num_agents=1,  # количество агентов н
 env = gym.make("Pogema-v0", grid_config=grid_config)
 # name_ds = 'train_2'
 size_look = 15
+max_size = 64
 
 
 class Node:
@@ -42,12 +43,14 @@ class AStar:
         self.other_agents = set()
         self.f = []
 
+
     def compute_shortest_path(self, start, goal):
         self.start = start
         self.goal = goal
         self.CLOSED = dict()
         self.OPEN = list()
         self.f = []
+
         heappush(self.OPEN, Node(self.start))
         u = Node()
         steps = 0
@@ -91,28 +94,30 @@ class Model:
             self.agents = [AStar() for _ in range(len(obs))]  # create a planner for each of the agents
         actions = []
         dist_agents = []
+
         for k in range(len(obs)):
             if positions_xy[k] == targets_xy[k]:  # don't waste time on the agents that have already reached their goals
                 actions.append(0)  # just add useless action to save the order and length of the actions
+                dist_agents.append(dict_to_np(self.agents[k].f))
                 continue
             self.agents[k].update_obstacles(obs[k][0], obs[k][1], (positions_xy[k][0] - 5, positions_xy[k][1] - 5))
             self.agents[k].compute_shortest_path(start=positions_xy[k], goal=targets_xy[k])
             next_node = self.agents[k].get_next_node()
-
             actions.append(self.actions[(next_node[0] - positions_xy[k][0], next_node[1] - positions_xy[k][1])])
-
             dist_agents.append(dict_to_np(self.agents[k].f))
-        return actions, dist_agents
+
+        return (actions, dist_agents)
 
 def dict_to_np(dict_open_cell):
-    size_look = 15
-    centr = 64 + 2 * size_look
-    map = np.zeros((2*centr+1, 2*centr + 1), dtype=np.int32)
+    centr = max_size + 2 * size_look
+    map = np.zeros((2*centr + 1, 2*centr + 1), dtype=np.uint8)
     for unit in dict_open_cell:
         x1 = centr + unit['i']
         y1 = centr + unit['j']
-        map[x1, y1] = unit['f']
+        if 0 <= x1 < 2*centr + 1 and 0 <= y1 < 2*centr + 1:
+            map[x1, y1] = unit['f']
     return map
+
 
 def write_dataset(name_ds, N):
     # N = 500_000
@@ -126,8 +131,8 @@ def write_dataset(name_ds, N):
         for game in range(N):
             if game % 1000 == 0 and game > 0:
                 print(game, len(list_s))
-                f.create_dataset(f"s{n_save}", data=np.array(list_s, dtype=np.int8))
-                f.create_dataset(f"a{n_save}", data=np.array(list_a, dtype=np.int8))
+                f.create_dataset(f"s{n_save}", data=np.array(list_s, dtype=np.uint8))
+                f.create_dataset(f"a{n_save}", data=np.array(list_a, dtype=np.uint8))
 
                 list_s = []
                 list_a = []
@@ -150,7 +155,7 @@ def write_dataset(name_ds, N):
                                       targets_xy)
                 obs_new, reward, done, info = env.step(action)
 
-                newobs = update_obstacles(obs, current_xy, targets_xy, zabor_map, history_dict, step, dist_agents)
+                newobs = update_obstacles(obs, current_xy, targets_xy, zabor_map, history_dict, dist_agents, step)
                 list_s.append(newobs[0])
                 list_a.append(action[0])
 
@@ -161,17 +166,22 @@ def write_dataset(name_ds, N):
         f.create_dataset(f"s{n_save}", data=np.array(list_s, dtype=np.uint8))
         f.create_dataset(f"a{n_save}", data=np.array(list_a, dtype=np.uint8))
 
-def update_obstacles(obs, currentxy, targetsxy, zabormap, historydict, step, distagents):
+def update_obstacles(obs, currentxy, targetsxy, zabormap, historydict, distagents, step):
     newobs = []
     for i, (o, current_xy, targets_xy, zabor_map, dist_agents) in \
                                             enumerate(zip(obs, currentxy, targetsxy, zabormap, distagents)):
 
         centr = 64 + 2*size_look
+
+        map_target = np.zeros((2 * centr + 1, 2 * centr + 1), dtype=np.uint8)
+        map_target_local = np.zeros((2 * centr + 1, 2 * centr + 1), dtype=np.uint8)
+        map_start = np.zeros((2 * centr + 1, 2 * centr + 1), dtype=np.uint8)
+        map_all_agents = np.zeros((2 * centr + 1, 2 * centr + 1), dtype=np.uint8)
+
         d0 = centr + current_xy[0] - 5
         d1 = centr + current_xy[1] - 5
         zabor_map[d0: d0 + 11, d1: d1 + 11] = o[0]
 
-        map_all_agents = np.zeros((2 * centr + 1, 2 * centr + 1), dtype=np.uint8)
         map_all_agents[d0: d0 + 11, d1: d1 + 11] = o[1]
         map_all_agents[centr + current_xy[0],  centr + current_xy[1]] = 0
 
@@ -187,19 +197,16 @@ def update_obstacles(obs, currentxy, targetsxy, zabormap, historydict, step, dis
             hist.append(hhh)
 
 
-        map_target = np.zeros((2 * centr + 1, 2 * centr + 1), dtype=np.uint8)
         map_target[centr + targets_xy[0], centr + targets_xy[1]] = 1
 
-        map_target_local = np.zeros((2 * centr + 1, 2 * centr + 1), dtype=np.uint8)
         map_target_local[d0: d0 + 11, d1: d1 + 11] = o[2]
 
-        map_start = np.zeros((2 * centr + 1, 2 * centr + 1), dtype=np.uint8)
         map_start[centr, centr] = 1
 
         x1 = centr + current_xy[0] - size_look
-        x2 = centr + current_xy[0] + size_look + 1
+        x2 = x1 + 2*size_look + 1
         y1 = centr + current_xy[1] - size_look
-        y2 = centr + current_xy[1] + size_look + 1
+        y2 = y1 + 2*size_look + 1
 
         map_1 = zabor_map[x1: x2, y1: y2]
         map_2 = map_all_agents[x1: x2, y1: y2]
@@ -252,8 +259,20 @@ class H5Dataset(Dataset):
 
     def __getitem__(self, index):
         c, i = self.indices[index]
-        state = self.archive[f"s{c}"][i]
+        state = np.float32(self.archive[f"s{c}"][i])
         a = self.archive[f"a{c}"][i]
+
+        nz = np.nonzero(state[8])
+        max_e = np.max(state[8])
+        min_e = np.min(state[8][nz])
+        mask = state[8] != 0
+        for i in range(31):
+            for j in range(31):
+                if max_e - min_e != 0:
+                    if mask[i, j]:
+                        state[8][i, j] = (max_e - state[8][i, j]) / (max_e - min_e)
+                else:
+                    state[8][i, j] = 1
 
         data_s = torch.from_numpy(state)
 
@@ -268,7 +287,7 @@ class H5Dataset(Dataset):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', default='pups')
-    parser.add_argument('-n', type=int, default=1000)
+    parser.add_argument('-n', type=int, default=1001)
 
     arg = parser.parse_args()
     # pass
