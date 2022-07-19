@@ -96,7 +96,7 @@ class PPO:
         self.n_updates_per_iteration = 5
         self.gamma = 0.99
         self.gae_lambda = 0.95
-        self.beta = 0.005
+        self.beta = 0.01
         self.clip = 0.1
         self.lr_actor = 1e-5
         self.lr_critic = 1e-4
@@ -111,15 +111,15 @@ class PPO:
             self.actor.load_state_dict(torch.load(path_to_actor))
 
 
-        self.actor_optim = Adam(self.actor.parameters(), lr=self.lr_actor)
-        self.critic_optim = Adam(self.critic.parameters(), lr=self.lr_critic)
+        self.actor_optim = SGD(self.actor.parameters(), lr=self.lr_actor)
+        self.critic_optim = SGD(self.critic.parameters(), lr=self.lr_critic)
 
         self.id_save = id_save
 
     def learn(self, max_time_steps):
         # all_map = [(8, 32), (16, 32), (32, 32),(64, 32),(16, 64), (32, 64), (64, 64), (128, 64)]
         all_map = [(8, 16), (16, 16), (32, 16),
-                   (8, 32), (16, 32), (32, 32), (64, 32), (128, 32)
+                   (8, 32), (16, 32), (32, 32), (64, 32), (128, 32),
                    (8, 64), (16, 64), (32, 64), (64, 64), (128, 64), (256, 64),
                    ]
 
@@ -386,10 +386,10 @@ class PPO:
         for sr, f in zip(step_reward, finish):
             if sr == 1.0:
                 rew.append(1)
-            # elif f == True:
-            #     rew.append(0)
-            else:
+            elif f == True:
                 rew.append(0)
+            else:
+                rew.append(-0.005)
 
         return rew
 
