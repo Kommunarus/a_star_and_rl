@@ -78,9 +78,9 @@ class AStar:
         for obstacle in obstacles:
             self.obstacles.add((n[0] + obstacle[0], n[1] + obstacle[1]))  # save them with correct coordinates
         self.other_agents.clear()  # forget previously seen agents as they move
-        agents = np.transpose(np.nonzero(other_agents))  # get the coordinates of all agents that are seen
-        for agent in agents:
-            self.other_agents.add((n[0] + agent[0], n[1] + agent[1]))  # save them with correct coordinates
+        # agents = np.transpose(np.nonzero(other_agents))  # get the coordinates of all agents that are seen
+        # for agent in agents:
+        #     self.other_agents.add((n[0] + agent[0], n[1] + agent[1]))  # save them with correct coordinates
 
 
 class Model:
