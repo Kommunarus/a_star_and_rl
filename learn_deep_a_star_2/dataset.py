@@ -73,19 +73,21 @@ class AStar:
                 next_node = self.CLOSED[next_node]
         return next_node
 
-    def update_obstacles(self, obs, other_agents, n):
+    def update_obstacles(self, obs, other_agents, n, with_agents):
         obstacles = np.transpose(np.nonzero(obs))  # get the coordinates of all obstacles in current observation
         for obstacle in obstacles:
             self.obstacles.add((n[0] + obstacle[0], n[1] + obstacle[1]))  # save them with correct coordinates
         self.other_agents.clear()  # forget previously seen agents as they move
-        # agents = np.transpose(np.nonzero(other_agents))  # get the coordinates of all agents that are seen
-        # for agent in agents:
-        #     self.other_agents.add((n[0] + agent[0], n[1] + agent[1]))  # save them with correct coordinates
+        if with_agents:
+            agents = np.transpose(np.nonzero(other_agents))  # get the coordinates of all agents that are seen
+            for agent in agents:
+                self.other_agents.add((n[0] + agent[0], n[1] + agent[1]))  # save them with correct coordinates
 
 
 class Model:
-    def __init__(self):
+    def __init__(self, with_agents=False):
         self.agents = None
+        self.with_agents = with_agents
         self.actions = {tuple(GridConfig().MOVES[i]): i for i in
                         range(len(GridConfig().MOVES))}  # make a dictionary to translate coordinates of actions into id
 
@@ -100,7 +102,7 @@ class Model:
                 actions.append(0)  # just add useless action to save the order and length of the actions
                 dist_agents.append(dict_to_np(self.agents[k].f))
                 continue
-            self.agents[k].update_obstacles(obs[k][0], obs[k][1], (positions_xy[k][0] - 5, positions_xy[k][1] - 5))
+            self.agents[k].update_obstacles(obs[k][0], obs[k][1], (positions_xy[k][0] - 5, positions_xy[k][1] - 5), self.with_agents)
             self.agents[k].compute_shortest_path(start=positions_xy[k], goal=targets_xy[k])
             next_node = self.agents[k].get_next_node()
             actions.append(self.actions[(next_node[0] - positions_xy[k][0], next_node[1] - positions_xy[k][1])])

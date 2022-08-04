@@ -9,13 +9,13 @@ from heapq import heappop, heappush
 import gym
 from pogema.animation import AnimationMonitor
 from pogema import GridConfig
-from ppo_net import PPOActor
+from ppo_net import PPOActor_macro
 import collections
 import os
 import shutil
 from dataset import Model as astar
 import datetime
-
+import torch.nn.functional as F
 
 device = torch.device('cuda:1')
 
@@ -27,17 +27,18 @@ class Agent:
 
 class PolicyNetwork():
     def __init__(self, path_to_model=None):
-
-        self.solver = PPOActor(hidden_dim=128, n_actions=5).to(device)
+        self.maxagent = 128
+        self.solver = PPOActor_macro(hidden_dim=128, n_actions=5).to(device)
         if path_to_model is not None:
             self.solver.load_state_dict(torch.load(path_to_model))
+
 
         self.optimizer = torch.optim.SGD(self.solver.parameters(), lr)
 
 
-    def predict(self, s):
+    def predict(self, s, n):
         eps = 1e-4
-        x = self.solver(s)
+        x = self.solver(s, n)
         act_bot_probs = nn.Softmax(1)(x)
         move_probs = torch.clip(act_bot_probs, eps, 1 - eps)
         move_probs = move_probs / torch.sum(move_probs)
@@ -56,7 +57,7 @@ class PolicyNetwork():
             # if len(s) != batch_size:
             #     continue
 
-            pred = self.solver(s)
+            hid, pred = self.solver(s)
             prob = nn.Softmax(1)(pred)
             prob_a = prob.gather(1, torch.unsqueeze(a, 1)).squeeze(1)
             loss1 = (-(prob_a + 1e-5).log() * target).mean()
@@ -68,8 +69,7 @@ class PolicyNetwork():
 
 
     def get_action(self, s):
-        tensor_s = torch.unsqueeze(torch.from_numpy(s).to(torch.float32), 0).to(device)
-        probs = self.predict(tensor_s)
+        probs = self.predict(s)
         action = torch.multinomial(probs, 1).item()
         return action
 
@@ -161,14 +161,13 @@ def reinforce(bs, current_policy=None):
     actions_dataset = []
     rewards_dataset = []
     all_map = [(8, 16), (16, 16), (32, 16),
-               (8, 32), (16, 32), (32, 32), (64, 32), # (128, 32),
-               (8, 64), (16, 64), (32, 64), (64, 64), # (128, 64),
+               (8, 32), (16, 32), (32, 32), (64, 32), (128, 32),
+               (8, 64), (16, 64), (32, 64), (64, 64), (128, 64),
                ]
     cooperativ_score = []
     cooperativ_numagent = []
     all_fin = 0
     for map in all_map:
-    # for episode in range(n_episode):
         agents = []
 
         # map = random.choice(all_map)
@@ -207,6 +206,9 @@ def reinforce(bs, current_policy=None):
 
 
             target = [sum(x) for x in rewards_game]
+
+            action_rl = current_policy.get_action(newobs)
+
             all_action = []
             for robot in range(num_agents):
                 if target[robot] == 0:
@@ -286,12 +288,12 @@ class Dataset_games(Dataset):
 if __name__ == '__main__':
 
     lr = 5e-5
-    batchsize = 512
+    batchsize = 128
     max_size = 64
     size_look = 15
 
-    # pathagent = 'model_end.pth'
-    pathagent = 'model_gp.pth'
+    pathagent = 'model_end_macro.pth'
+    # pathagent = 'model_gp.pth'
     episode = 0
     while True:
         current_policy = PolicyNetwork(path_to_model=pathagent)
