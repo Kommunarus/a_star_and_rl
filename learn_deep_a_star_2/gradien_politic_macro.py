@@ -9,7 +9,7 @@ from heapq import heappop, heappush
 import gym
 from pogema.animation import AnimationMonitor
 from pogema import GridConfig
-from ppo_net import PPOActor_macro
+from ppo_net import PPOActor2
 import collections
 import os
 import shutil
@@ -28,7 +28,7 @@ class Agent:
 class PolicyNetwork():
     def __init__(self, path_to_model=None):
         self.maxagent = 128
-        self.solver = PPOActor_macro(hidden_dim=128, n_actions=5).to(device)
+        self.solver = PPOActor2().to(device)
         if path_to_model is not None:
             self.solver.load_state_dict(torch.load(path_to_model))
 
@@ -36,28 +36,32 @@ class PolicyNetwork():
         self.optimizer = torch.optim.SGD(self.solver.parameters(), lr)
 
 
-    def predict(self, s, n):
+    def predict(self, s):
         eps = 1e-4
-        x = self.solver(s, n)
-        act_bot_probs = nn.Softmax(1)(x)
+        x = self.solver(s)
+        act_bot_probs = nn.Softmax(1)(torch.squeeze(x))
         move_probs = torch.clip(act_bot_probs, eps, 1 - eps)
-        move_probs = move_probs / torch.sum(move_probs)
+        move_probs = move_probs / torch.sum(move_probs, 1).unsqueeze(1)
         # action_bot = torch.multinomial(act_bot_probs, 1).item()
-        return torch.squeeze(move_probs)
+        return move_probs
 
 
     def update(self, batch_size, dataloader_train):
         self.solver.train()
 
-        for i, (ts, ta, tt) in enumerate(dataloader_train):
-            s, a, target = ts.to(device).to(torch.float32), \
+        for i, (ts, ta, tt, nt) in enumerate(dataloader_train):
+            s, a, target, n = ts.to(device).to(torch.float32), \
                           ta.to(device), \
-                          tt.to(device)
+                          tt.to(device), \
+                          nt.to(device)
 
             # if len(s) != batch_size:
             #     continue
 
-            hid, pred = self.solver(s)
+            pred_all = self.solver(s)
+            pred = torch.zeros((pred_all.shape[0], pred_all.shape[2])).to(device)
+            for i in range(pred_all.shape[0]):
+                pred[i] = pred_all[i, n[i]]
             prob = nn.Softmax(1)(pred)
             prob_a = prob.gather(1, torch.unsqueeze(a, 1)).squeeze(1)
             loss1 = (-(prob_a + 1e-5).log() * target).mean()
@@ -68,10 +72,20 @@ class PolicyNetwork():
             self.optimizer.step()
 
 
-    def get_action(self, s):
-        probs = self.predict(s)
-        action = torch.multinomial(probs, 1).item()
-        return action
+    def get_action(self, list_s):
+        with torch.no_grad():
+            actins = []
+            tensor_s = torch.from_numpy(np.array(list_s)).to(torch.float32).to(device)
+            new_tensor = torch.zeros((max_agent, 17, 31, 31)).to(torch.float32).to(device)
+            numis = random.sample(range(max_agent), k=len(list_s))
+            for i, num in enumerate(numis):
+                new_tensor[num] = tensor_s[i]
+            new_tensor = torch.unsqueeze(new_tensor, 0)
+            probs = self.predict(new_tensor)
+            for i, num in enumerate(numis):
+                action = torch.multinomial(probs[num], 1).item()
+                actins.append(action)
+        return actins, numis
 
 def update_obstacles(obs, currentxy, targetsxy, historydict, dist_agents_without, dist_agents_with, step, agents):
     newobs = []
@@ -158,11 +172,14 @@ def update_obstacles(obs, currentxy, targetsxy, historydict, dist_agents_without
 
 def reinforce(bs, current_policy=None):
     states_dataset = []
+    numers_dataset = []
+    listnumers_dataset = []
     actions_dataset = []
     rewards_dataset = []
-    all_map = [(8, 16), (16, 16), (32, 16),
-               (8, 32), (16, 32), (32, 32), (64, 32), (128, 32),
-               (8, 64), (16, 64), (32, 64), (64, 64), (128, 64),
+    # all_map = [(32, 16), (32, 32), (32, 64)]
+    all_map = [(8, 16), (16, 16), #(32, 16),
+               (8, 32), (16, 32), #(32, 32),#(64, 32),# (128, 32),
+               (8, 64), (16, 64), #(32, 64),#(64, 64),# (128, 64),
                ]
     cooperativ_score = []
     cooperativ_numagent = []
@@ -186,6 +203,8 @@ def reinforce(bs, current_policy=None):
         env = gym.make("Pogema-v0", grid_config=grid_config)
 
         states = [[] for _ in range(num_agents)]
+        numers = [[] for _ in range(num_agents)]
+        listnumers = [[] for _ in range(num_agents)]
         actions = [[] for _ in range(num_agents)]
         rewards_game = [[] for _ in range(num_agents)]
         state = env.reset()
@@ -206,18 +225,19 @@ def reinforce(bs, current_policy=None):
 
 
             target = [sum(x) for x in rewards_game]
-
-            action_rl = current_policy.get_action(newobs)
+            actionrl, numis = current_policy.get_action(newobs)
 
             all_action = []
             for robot in range(num_agents):
                 if target[robot] == 0:
                     if random.random() > 0.05:
-                        action_rl = current_policy.get_action(newobs[robot])
+                        action_rl = actionrl[robot]
                     else:
                         action_rl = random.choice([0, 1, 2, 3, 4])
 
-                    states[robot].append(newobs[robot])
+                    states[robot].append(newobs)
+                    numers[robot].append(numis[robot])
+                    listnumers[robot].append(numis)
                     actions[robot].append(action_rl)
                 else:
                     action_rl = 0
@@ -249,12 +269,14 @@ def reinforce(bs, current_policy=None):
 
 
         states_dataset.append(copy.deepcopy(states))
+        numers_dataset.append(copy.deepcopy(numers))
+        listnumers_dataset.append(copy.deepcopy(listnumers))
         actions_dataset.append(copy.deepcopy(actions))
         rewards_dataset.append(copy.deepcopy(rewards))
         cooperativ_score.append(round(sum(target) / len(target), 2))
         cooperativ_numagent.append(num_agents)
 
-    dataset = Dataset_games(states_dataset, actions_dataset, rewards_dataset)
+    dataset = Dataset_games(states_dataset, actions_dataset, rewards_dataset, numers_dataset, listnumers_dataset)
     dataloader = DataLoader(dataset, batch_size=batchsize, shuffle=True)
     current_policy.update(bs, dataloader)
     torch.save(current_policy.solver.state_dict(), 'model_gp.pth')
@@ -270,33 +292,45 @@ def reinforce(bs, current_policy=None):
 
 
 class Dataset_games(Dataset):
-    def __init__(self, states, actions, rewards):
+    def __init__(self, states, actions, rewards, numers, listnumers):
         self.states = [item for play in states for agent in play for item in agent]
         self.actions = [item for play in actions for agent in play for item in agent]
         self.rewards = [item for play in rewards for agent in play for item in agent]
+        self.numers = [item for play in numers for agent in play for item in agent]
+        self.listnumers = [item for play in listnumers for agent in play for item in agent]
 
     def __len__(self):
         return len(self.states)
 
     def __getitem__(self, idx):
-        s = torch.from_numpy(self.states[idx])
+        list_s = self.states[idx]
+        numis = self.listnumers[idx]
+
+        tensor_s = torch.from_numpy(np.array(list_s)).to(torch.float32).to(device)
+        new_tensor = torch.zeros((max_agent, 17, 31, 31)).to(torch.float32).to(device)
+        for i, num in enumerate(numis):
+            new_tensor[num] = tensor_s[i]
+        # new_tensor = torch.unsqueeze(new_tensor, 0)
+
         a = torch.tensor(self.actions[idx])
         t = torch.tensor(self.rewards[idx])
-        return s, a, t
+        n = torch.tensor(self.numers[idx])
+        return new_tensor, a, t, n
 
 
 if __name__ == '__main__':
+    max_agent = 32
 
-    lr = 5e-5
-    batchsize = 128
+    lr = 1e-5
+    batchsize = 32
     max_size = 64
     size_look = 15
 
-    pathagent = 'model_end_macro.pth'
+    pathagent = 'model_end_macro3d_32.pth'
     # pathagent = 'model_gp.pth'
     episode = 0
+    current_policy = PolicyNetwork(path_to_model=pathagent)
     while True:
-        current_policy = PolicyNetwork(path_to_model=pathagent)
         reinforce(batchsize, current_policy)
         episode += 1
 
